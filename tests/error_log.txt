@@ -1,0 +1,94 @@
+[2025-06-26 21:24:35.314032] Order failed: EURPLN, code: 10016
+NoneType: None
+[2025-06-26 21:24:35.391302] Order failed: NZDUSD, code: 10019
+NoneType: None
+[2025-06-26 21:24:35.406237] Order failed: EURCHF, code: 10019
+NoneType: None
+[2025-06-26 21:24:35.413219] Order failed: GBPCHF, code: 10019
+NoneType: None
+[2025-06-26 21:24:35.421196] Order failed: AUDJPY, code: 10019
+NoneType: None
+[2025-06-26 21:24:35.428180] Order failed: AUDCHF, code: 10019
+NoneType: None
+[2025-06-26 21:24:35.435440] Order failed: NZDJPY, code: 10019
+NoneType: None
+[2025-06-26 21:24:35.450688] Order failed: CADCHF, code: 10019
+NoneType: None
+[2025-06-26 21:24:35.472679] Order failed: GBPNZD, code: 10019
+NoneType: None
+[2025-06-26 21:24:35.487844] Order failed: USDPLN, code: 10019
+NoneType: None
+[2025-06-26 21:24:35.518508] Order failed: USDPLN, code: 10019
+NoneType: None
+[2025-06-26 21:54:35.594064] Order failed: EURHKD, code: 10019
+NoneType: None
+[2025-06-26 21:54:35.606487] Order failed: EURNOK, code: 10019
+NoneType: None
+[2025-06-26 21:54:35.665261] Order failed: EURTRY, code: 10016
+NoneType: None
+[2025-06-26 21:54:35.668285] Order failed: EURTRY, code: 10016
+NoneType: None
+[2025-06-26 21:54:35.677350] Order failed: EURZAR, code: 10019
+NoneType: None
+[2025-06-26 21:54:35.685212] Order failed: GBPUSD, code: 10019
+NoneType: None
+[2025-06-26 21:54:35.700171] Order failed: AUDUSD, code: 10019
+NoneType: None
+[2025-06-26 21:54:35.707148] Order failed: NZDUSD, code: 10019
+NoneType: None
+[2025-06-26 21:54:35.714835] Order failed: USDCAD, code: 10019
+NoneType: None
+[2025-06-26 21:54:35.726805] Order failed: EURGBP, code: 10019
+NoneType: None
+[2025-06-26 21:54:35.741884] Order failed: GBPCHF, code: 10019
+NoneType: None
+[2025-06-26 21:54:35.755729] Order failed: NZDJPY, code: 10019
+NoneType: None
+[2025-06-26 21:54:35.776703] Order failed: CADCHF, code: 10019
+NoneType: None
+[2025-06-26 21:54:35.784682] Order failed: AUDCAD, code: 10019
+NoneType: None
+[2025-06-26 21:54:35.796760] Order failed: EURCAD, code: 10019
+NoneType: None
+[2025-06-26 21:54:35.811936] Order failed: USDNOK, code: 10019
+NoneType: None
+[2025-06-26 21:54:35.818561] Order failed: USDPLN, code: 10019
+NoneType: None
+[2025-06-26 21:54:35.825566] Order failed: USDZAR, code: 10019
+NoneType: None
+[2025-06-26 21:54:35.839504] Order failed: USDTRY, code: 10016
+NoneType: None
+[2025-06-26 21:54:35.842948] Order failed: USDTRY, code: 10016
+NoneType: None
+[2025-06-26 21:54:35.857456] Order failed: USDPLN, code: 10019
+NoneType: None
+[2025-06-26 21:54:35.864742] Order failed: USDNOK, code: 10019
+NoneType: None
+[2025-06-26 21:54:35.870652] Order failed: USDTRY, code: 10016
+NoneType: None
+[2025-06-26 21:54:35.875320] Order failed: USDTRY, code: 10016
+NoneType: None
+[2025-06-26 21:54:35.881623] Order failed: USDZAR, code: 10019
+NoneType: None
+[2025-06-26 22:24:35.940443] Order failed: EURPLN, code: 10016
+NoneType: None
+[2025-06-26 22:24:35.953158] Order failed: EURZAR, code: 10019
+NoneType: None
+[2025-06-26 22:24:35.996531] Order failed: AUDCHF, code: 10019
+NoneType: None
+[2025-06-26 22:24:36.013333] Order failed: CADCHF, code: 10019
+NoneType: None
+[2025-06-26 22:24:36.017127] Order failed: CADCHF, code: 10019
+NoneType: None
+[2025-06-26 22:24:36.024109] Order failed: AUDCAD, code: 10019
+NoneType: None
+[2025-06-26 22:24:36.027421] Order failed: AUDCAD, code: 10019
+NoneType: None
+[2025-06-26 22:24:36.037075] Order failed: EURCAD, code: 10019
+NoneType: None
+[2025-06-26 22:24:36.046808] Order failed: USDSEK, code: 10019
+NoneType: None
+[2025-06-26 22:24:36.053775] Order failed: USDNOK, code: 10019
+NoneType: None
+[2025-06-26 22:24:36.141325] Order failed: USDNOK, code: 10019
+NoneType: None

@@ -1,0 +1,51 @@
+# === Python ===
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+*.pyc
+
+# === Virtual Environment ===
+Lib/
+Scripts/
+Include/
+pyvenv.cfg
+*.pth
+
+# === Dane i logi (wrażliwe / duże pliki) ===
+forex_logs/
+forex_data/
+forex_models/
+*.log
+*.csv
+*.pkl
+*.json
+
+# === Pliki tymczasowe i IDE ===
+.vscode/
+*.tmp
+*.bak
+*~
+Thumbs.db
+
+# === Windows ===
+desktop.ini
+$RECYCLE.BIN/
+
+# === Kopie robocze (nie wchodzą do repo) ===
+*- Copy.py
+* copy.py
+* copy*.py
+tst.py
+fix_db_writer.py
+
+# === Dane testowe (duże) ===
+tests/*.csv
+tests/*.pkl
+tests/*.log
+tests/_last_bars.json
+tests/last_bars.json
+
+# === Nie commituj modelu ML (duży plik) ===
+max_profit_dict.pkl
+forex_prev/*.pkl
