@@ -135,6 +135,8 @@ def add_indicators(df):
 def should_retrain(model_path, data_path, retrain_interval_hours=24):
     if not os.path.exists(model_path):
         return True
+    if not os.path.exists(data_path):
+        return True  # Brak danych CSV → pobierz i trenuj
     model_time = os.path.getmtime(model_path)
     data_time = os.path.getmtime(data_path)
     now = time.time()
