@@ -10,7 +10,6 @@ import time
 import json
 from datetime import datetime
 from xgboost import XGBClassifier
-from sklearn.model_selection import train_test_split
 from sklearn.metrics import classification_report
 from sklearn.preprocessing import StandardScaler
 from forex_base.globalcfg import get_global_cfg
@@ -171,7 +170,10 @@ def prepare_dataset(symbol):
 def train_model(symbol):
     logging.info(f"ℹ️[INFO] Trening modelu dla: {symbol}")
     X, y = prepare_dataset(symbol)
-    X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.2, random_state=42)
+    # Chronologiczny podział — ostatnie 20% jako test (bez mieszania danych)
+    split_idx = int(len(X) * 0.8)
+    X_train, X_test = X[:split_idx], X[split_idx:]
+    y_train, y_test = y.iloc[:split_idx], y.iloc[split_idx:]
     # Balans klas — zapobiega bias SELL lub BUY
     sell_count = int((y_train == 0).sum())
     buy_count  = int((y_train == 1).sum())
@@ -179,16 +181,18 @@ def train_model(symbol):
     logging.info(f"ℹ️[TRAIN] {symbol}: BUY={buy_count}, SELL={sell_count}, scale_pos_weight={scale_pos_weight:.2f}")
 
     model = XGBClassifier(
-        n_estimators=300,
+        n_estimators=500,
         max_depth=6,
         learning_rate=0.05,
         subsample=0.8,
         colsample_bytree=0.8,
         scale_pos_weight=scale_pos_weight,
         eval_metric='logloss',
+        early_stopping_rounds=30,
         use_label_encoder=False
     )
-    model.fit(X_train, y_train)
+    model.fit(X_train, y_train, eval_set=[(X_test, y_test)], verbose=False)
+    logging.info(f"ℹ️[TRAIN] {symbol}: najlepsze drzewo = {model.best_iteration} / max 500")
     y_pred = model.predict(X_test)
     # print(classification_report(y_test, y_pred))
     joblib.dump(model, os.path.join(model_dir, f"{symbol}_model.pkl"))
