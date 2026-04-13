@@ -60,6 +60,7 @@ global_cfg = {
     "volatility_block_end": 4,                      # Blokada handlu do godziny UTC (04:00)
     "symbol_cooldown_hours": 24,                    # Cooldown na symbol po stracie (godziny)
     "max_daily_losses": 3,                          # Max strat dziennie → stop handlu na dzień
+    "max_open_positions": 5,                        # Max jednoczesnych otwartych pozycji (limit marginu)
     # --- Variant C: ochrona pozycji ---
     "partial_close_r": 1.5,                         # Częściowe zamknięcie pozycji przy R>=1.5
     "partial_close_pct": 0.5,                       # Procent pozycji do zamknięcia (50%)

@@ -54,6 +54,7 @@ VOL_BLOCK_START         = int(get_global_cfg("volatility_block_start"))   # Bloc
 VOL_BLOCK_END           = int(get_global_cfg("volatility_block_end"))     # Block trading until UTC hour
 SYMBOL_COOLDOWN_H       = float(get_global_cfg("symbol_cooldown_hours"))  # Cooldown after loss (hours)
 MAX_DAILY_LOSSES        = int(get_global_cfg("max_daily_losses"))         # Max losses per day
+MAX_OPEN_POSITIONS      = int(get_global_cfg("max_open_positions"))       # Max simultaneous open positions
 # --- Variant C: ochrona pozycji ---
 PARTIAL_CLOSE_R         = float(get_global_cfg("partial_close_r"))        # Partial close at R>=1.5
 PARTIAL_CLOSE_PCT       = float(get_global_cfg("partial_close_pct"))      # % to close (0.5 = 50%)
@@ -1411,7 +1412,16 @@ try:
                         )
                         is_not_duplicate = is_not_duplicate_trade(symbol, decision)
                         if is_not_duplicate:
-                            place_order(symbol, decision, atr, prob)
+                            # --- Limit otwartych pozycji ---
+                            _open_positions = mt5.positions_get()
+                            _open_count = len(_open_positions) if _open_positions else 0
+                            if _open_count >= MAX_OPEN_POSITIONS:
+                                logging.info(
+                                    f"⛔ {symbol} — limit pozycji osiągnięty "
+                                    f"({_open_count}/{MAX_OPEN_POSITIONS}). Pomijam."
+                                )
+                            else:
+                                place_order(symbol, decision, atr, prob)
                 else:
                     logging.info(f"ℹ️ Brak decyzji dla {symbol}, predykcja: {prob}")
 
