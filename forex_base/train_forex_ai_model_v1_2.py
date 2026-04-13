@@ -146,11 +146,18 @@ def prepare_dataset(symbol):
     filepath = os.path.join(output_dir, f"{symbol}.csv")
     df = pd.read_csv(filepath)
     df.columns = [c.lower() for c in df.columns]
-    df['return'] = df['close'].pct_change().fillna(0)  # <-- DODAJ TO!
+
+    # return = zmiana poprzedniej swiacy (shift +1 = bez data leakage)
+    df['return'] = df['close'].pct_change().shift(1).fillna(0)
+
     df = extract_features_with_patterns(df)
-    df['target'] = np.where(df['return'] > 0.0005, 1, np.where(df['return'] < -0.0005, 0, np.nan))
-    df.dropna(inplace=True)
     df = add_indicators(df)
+
+    # target = kierunek NASTEPNEJ swiecy (to chcemy przewidziec)
+    next_return = df['close'].pct_change().shift(-1)
+    df['target'] = np.where(next_return > 0.0005, 1, np.where(next_return < -0.0005, 0, np.nan))
+    df.dropna(inplace=True)
+
     X = df.drop(['target', 'time'], axis=1, errors='ignore')
     y = df['target']
     scaler = StandardScaler()
@@ -163,12 +170,19 @@ def train_model(symbol):
     logging.info(f"ℹ️[INFO] Trening modelu dla: {symbol}")
     X, y = prepare_dataset(symbol)
     X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.2, random_state=42)
+    # Balans klas — zapobiega bias SELL lub BUY
+    sell_count = int((y_train == 0).sum())
+    buy_count  = int((y_train == 1).sum())
+    scale_pos_weight = sell_count / buy_count if buy_count > 0 else 1.0
+    logging.info(f"ℹ️[TRAIN] {symbol}: BUY={buy_count}, SELL={sell_count}, scale_pos_weight={scale_pos_weight:.2f}")
+
     model = XGBClassifier(
         n_estimators=300,
         max_depth=6,
         learning_rate=0.05,
         subsample=0.8,
         colsample_bytree=0.8,
+        scale_pos_weight=scale_pos_weight,
         eval_metric='logloss',
         use_label_encoder=False
     )
