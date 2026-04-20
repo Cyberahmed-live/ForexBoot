@@ -169,11 +169,7 @@ def should_trade(df, model, scaler, feature_columns):
         confidence = float(pred_proba[decision])
 
         logging.info(f"ℹ️ Prediction: decision={decision}, confidence={confidence:.2f}")
-
-        if confidence > PREDICT_PROBA_THRESHOLD:
-            return decision, confidence
-        else:
-            logging.info(f"ℹ️ Confidence {confidence:.2f} below threshold {PREDICT_PROBA_THRESHOLD}")
+        return decision, confidence
 
     except Exception as e:
         logging.error(f"❌ Prediction error: {e}", exc_info=True)  # exc_info=True daje traceback
@@ -366,13 +362,16 @@ def place_order(symbol, action, atr, pred_proba):
     # Nie otwieraj pozycji, jeśli ATR jest zbyt niski
     if atr < ATR_MIN:
         logging.info(f"⚠️ ATR zbyt niski ({atr:.5f}) dla {symbol}, pomijam sygnał.")
+        try:
+            mssql.insert_diagnostic(event_type="FILTER_ATR", symbol=symbol,
+                                    ml_decision=action, ml_confidence=pred_proba,
+                                    filter_blocked=True,
+                                    filter_reason=f"ATR={atr:.5f} < ATR_MIN={ATR_MIN}",
+                                    atr=atr, action_taken="SKIP")
+        except Exception:
+            pass
         return
     
-    # Nie otwieraj pozycji, jeśli CONFIDENCE jest zbyt niski
-    if pred_proba < PREDICT_PROBA_THRESHOLD:
-        logging.info(f"⚠️ Confidence zbyt niski ({pred_proba:.2f}) dla {symbol}, pomijam sygnał.")
-        return
-
     # --- Variant C: Filtr R:R (min TP/SL ratio) ---
     sl_distance = abs(price - sl)
     tp_distance = abs(tp - price)
@@ -383,6 +382,14 @@ def place_order(symbol, action, atr, pred_proba):
                 f"⛔ R:R za niski ({rr_ratio:.2f} < {MIN_RR_RATIO}) dla {symbol}, "
                 f"TP_dist={tp_distance:.5f}, SL_dist={sl_distance:.5f}. Blokuję."
             )
+            try:
+                mssql.insert_diagnostic(event_type="FILTER_RR", symbol=symbol,
+                                        ml_decision=action, ml_confidence=pred_proba,
+                                        filter_blocked=True,
+                                        filter_reason=f"RR={rr_ratio:.2f} < {MIN_RR_RATIO}",
+                                        atr=atr, rr_ratio=rr_ratio, action_taken="SKIP")
+            except Exception:
+                pass
             return
 
     # --- Variant C: Filtr spreadu (spread > 20% SL → block) ---
@@ -392,7 +399,17 @@ def place_order(symbol, action, atr, pred_proba):
             f"⛔ Spread za duży ({spread_points:.5f} = {spread_points/sl_distance*100:.1f}% SL) "
             f"dla {symbol}. Limit={SPREAD_FILTER_PCT*100:.0f}%. Blokuję."
         )
-        return
+        try:
+            mssql.insert_diagnostic(event_type="FILTER_SPREAD", symbol=symbol,
+                                    ml_decision=action, ml_confidence=pred_proba,
+                                    filter_blocked=True,
+                                    filter_reason=(
+                                        f"spread={spread_points:.5f} "
+                                        f"={spread_points/sl_distance*100:.1f}%SL"
+                                    ),
+                                    atr=atr, action_taken="SKIP")
+        except Exception:
+            pass
         return
     
     # 🔢 Oblicz dynamicznie maksymalny możliwy lot (80% wolnej marży)
@@ -1201,10 +1218,12 @@ print(f"📈 Bot AI version: {VERSION} uruchomiony")
 
 # === WISDOM AGGREGATOR (v1.4) + MS SQL ===
 mssql = MSSQLWriter()
-mssql.ensure_npm_table()  # NPM: utwórz tabelę jeśli nie istnieje
+mssql.ensure_npm_table()          # NPM: utwórz tabelę jeśli nie istnieje
+mssql.ensure_diagnostics_table()  # DiagLog: utwórz tabelę jeśli nie istnieje
+mssql.purge_old_logs(days=14)     # Wyczyść logi starsze niż 2 tygodnie
 set_mssql_writer(mssql)  # Połącz tran_logs z bazą MS SQL
 # Przekieruj WARNING+ do tabeli bot_logs
-_db_log_handler = DBLogHandler(mssql, min_level=logging.WARNING)
+_db_log_handler = DBLogHandler(mssql, min_level=logging.INFO)
 logging.getLogger().addHandler(_db_log_handler)
 wisdom = WisdomAggregator(db=mssql)
 logging.info(f"🧠 Wisdom Aggregator aktywny (MS SQL). Obserwacje w bazie: {wisdom.count_observations()}")
@@ -1389,27 +1408,85 @@ try:
                 except Exception as we:
                     logging.error(f"❌ Wisdom observation error for {symbol}: {we}")
 
-                if atr is not None and decision is not None and prob is not None:
-                    # 🧭 Filtr hierarchiczny W1→D1: handluj TYLKO z trendem nadrzędnym
+                # --- Filtr confidence (loguj do diagnostyki zawsze) ---
+                if decision is not None and prob is not None and prob <= PREDICT_PROBA_THRESHOLD:
+                    logging.info(f"ℹ️ Confidence {prob:.2f} below threshold {PREDICT_PROBA_THRESHOLD}")
+                    try:
+                        mssql.insert_diagnostic(
+                            event_type="FILTER_CONFIDENCE",
+                            symbol=symbol,
+                            ml_decision=decision,
+                            ml_confidence=prob,
+                            filter_blocked=True,
+                            filter_reason=f"conf={prob:.3f} < {PREDICT_PROBA_THRESHOLD}",
+                            atr=atr,
+                            action_taken="SKIP"
+                        )
+                    except Exception:
+                        pass
+
+                if atr is not None and decision is not None and prob is not None and prob > PREDICT_PROBA_THRESHOLD:
+                    # 🧭 Filtr HTF W1→D1: zrelaksowany — blokuj tylko gdy W1 PRZECIWNY do ML.
+                    # D1 neutralny (FLAT) jest dozwolony — blokada = D1 PRZECIWNY + W1 w tym samym kierunku.
                     htf = wisdom.get_higher_tf_trend(symbol)
                     ml_direction = "BUY" if decision == 0 else "SELL"
 
-                    if htf['aligned'] and htf['direction'] != ml_direction:
+                    w1 = htf['w1_trend']  # UP | DOWN | FLAT
+                    d1 = htf['d1_trend']  # UP | DOWN | FLAT
+                    w1_dir = "BUY" if w1 == "UP" else ("SELL" if w1 == "DOWN" else None)
+                    d1_dir = "BUY" if d1 == "UP" else ("SELL" if d1 == "DOWN" else None)
+
+                    htf_blocked = False
+                    htf_block_reason = None
+
+                    if w1_dir is not None and w1_dir != ml_direction:
+                        # W1 wyraźnie PRZECIWNY do ML → blokada
+                        htf_blocked = True
+                        htf_block_reason = f"W1={w1} sprzeczny z ML={ml_direction}"
+                    elif w1_dir is None and d1_dir is not None and d1_dir != ml_direction:
+                        # W1 FLAT, D1 PRZECIWNY → blokada
+                        htf_blocked = True
+                        htf_block_reason = f"W1=FLAT, D1={d1} sprzeczny z ML={ml_direction}"
+                    elif w1_dir is None and d1_dir is None:
+                        # Zarówno W1 jak i D1 FLAT — brak trendu nadrzędnego
+                        htf_blocked = True
+                        htf_block_reason = "W1=FLAT, D1=FLAT — brak trendu"
+
+                    if htf_blocked:
                         logging.info(
-                            f"⛔ {symbol} — ML={ml_direction} vs HTF={htf['direction']} "
-                            f"(W1={htf['w1_trend']}, D1={htf['d1_trend']}). Pomijam — sprzeczne z trendem."
+                            f"⛔ {symbol} — HTF blokada: {htf_block_reason} "
+                            f"(W1={w1}, D1={d1}). Pomijam."
                         )
-                    elif not htf['aligned']:
-                        # Variant C: W1/D1 nie zgodne → blokada (wcześniej: wejście z niższą pewnością)
-                        logging.info(
-                            f"⛔ {symbol} — W1={htf['w1_trend']} D1={htf['d1_trend']} nie są zgodne. "
-                            f"Blokuję — wymagana zgodność W1+D1."
-                        )
+                        try:
+                            mssql.insert_diagnostic(
+                                event_type="HTF_BLOCK",
+                                symbol=symbol,
+                                ml_decision=decision,
+                                ml_confidence=prob,
+                                filter_blocked=True,
+                                filter_reason=htf_block_reason,
+                                htf_w1=w1, htf_d1=d1, htf_aligned=False,
+                                atr=atr, action_taken="SKIP"
+                            )
+                        except Exception:
+                            pass
                     else:
                         logging.info(
-                            f"✅ {symbol} — ML={ml_direction} zgodne z HTF={htf['direction']} "
-                            f"(W1={htf['w1_trend']}, D1={htf['d1_trend']}). Wchodzę."
+                            f"✅ {symbol} — ML={ml_direction} OK vs HTF "
+                            f"(W1={w1}, D1={d1}). Wchodzę."
                         )
+                        try:
+                            mssql.insert_diagnostic(
+                                event_type="HTF_PASS",
+                                symbol=symbol,
+                                ml_decision=decision,
+                                ml_confidence=prob,
+                                filter_blocked=False,
+                                htf_w1=w1, htf_d1=d1, htf_aligned=True,
+                                atr=atr, action_taken="ENTER"
+                            )
+                        except Exception:
+                            pass
                         is_not_duplicate = is_not_duplicate_trade(symbol, decision)
                         if is_not_duplicate:
                             # --- Limit otwartych pozycji ---

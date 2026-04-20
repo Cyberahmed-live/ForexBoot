@@ -156,24 +156,36 @@ def prepare_dataset(symbol):
 
     # target = kierunek NASTEPNEJ swiecy (to chcemy przewidziec)
     next_return = df['close'].pct_change().shift(-1)
-    df['target'] = np.where(next_return > 0.0005, 1, np.where(next_return < -0.0005, 0, np.nan))
+
+    # Próg uwzględnia ATR jako proxy spreadu — eliminuje sygnały bliskie granicy
+    atr_median = float(df['atr'].median()) if 'atr' in df.columns and df['atr'].notna().any() else 0.0
+    threshold = max(0.0003, min(atr_median * 0.03, 0.0020))
+
+    df['target'] = np.where(next_return > threshold, 1, np.where(next_return < -threshold, 0, np.nan))
+    df['_next_return'] = next_return  # zachowaj do wag
     df.dropna(inplace=True)
 
-    X = df.drop(['target', 'time'], axis=1, errors='ignore')
+    # sample_weight: duże ruchy ważniejsze niż szum; normalizuj do ATR aby porówn. symbole
+    weight_raw = np.abs(df['_next_return']) / df['atr'].clip(lower=1e-8)
+    weight_raw = weight_raw.clip(upper=5.0)  # odetnij outliers
+    sample_weight = (weight_raw / weight_raw.mean()).values
+
+    X = df.drop(['target', '_next_return', 'time'], axis=1, errors='ignore')
     y = df['target']
     scaler = StandardScaler()
     X_scaled = scaler.fit_transform(X)
     joblib.dump(X.columns.tolist(), os.path.join(model_dir, f"{symbol}_feature_columns.pkl"))
     joblib.dump(scaler, os.path.join(model_dir, f"{symbol}_scaler.pkl"))
-    return X_scaled, y
+    return X_scaled, y, sample_weight
 
 def train_model(symbol):
     logging.info(f"ℹ️[INFO] Trening modelu dla: {symbol}")
-    X, y = prepare_dataset(symbol)
+    X, y, sample_weight = prepare_dataset(symbol)
     # Chronologiczny podział — ostatnie 20% jako test (bez mieszania danych)
     split_idx = int(len(X) * 0.8)
     X_train, X_test = X[:split_idx], X[split_idx:]
     y_train, y_test = y.iloc[:split_idx], y.iloc[split_idx:]
+    sw_train = sample_weight[:split_idx]
     # Balans klas — zapobiega bias SELL lub BUY
     sell_count = int((y_train == 0).sum())
     buy_count  = int((y_train == 1).sum())
@@ -187,11 +199,11 @@ def train_model(symbol):
         subsample=0.8,
         colsample_bytree=0.8,
         scale_pos_weight=scale_pos_weight,
-        eval_metric='logloss',
+        eval_metric='error',
         early_stopping_rounds=30,
-        use_label_encoder=False
     )
-    model.fit(X_train, y_train, eval_set=[(X_test, y_test)], verbose=False)
+    model.fit(X_train, y_train, sample_weight=sw_train,
+              eval_set=[(X_test, y_test)], verbose=False)
     logging.info(f"ℹ️[TRAIN] {symbol}: najlepsze drzewo = {model.best_iteration} / max 500")
     y_pred = model.predict(X_test)
     # print(classification_report(y_test, y_pred))
@@ -226,6 +238,37 @@ def get_last_train_time(symbol):
     train_times = load_train_times()
     return train_times.get(symbol, None)
 
+def get_recent_win_rate(symbol, last_n=20):
+    """Pobierz win_rate z ostatnich N zamkniętych transakcji dla symbolu.
+
+    Łączy się z ForexBotDB przez pyodbc. Zwraca float [0.0–1.0] lub None.
+    """
+    try:
+        import pyodbc
+        conn_str = (
+            "DRIVER={ODBC Driver 17 for SQL Server};"
+            "SERVER=localhost;"
+            "DATABASE=ForexBotDB;"
+            "Trusted_Connection=yes;"
+        )
+        sql = """
+        SELECT TOP (?) profit_money
+        FROM trade_outcomes
+        WHERE symbol = ?
+        ORDER BY timestamp DESC
+        """
+        con = pyodbc.connect(conn_str, timeout=5)
+        rows = con.execute(sql, last_n, symbol).fetchall()
+        con.close()
+        if not rows or len(rows) < 5:
+            return None  # za mało próbek
+        wins = sum(1 for r in rows if r.profit_money is not None and r.profit_money > 0)
+        return wins / len(rows)
+    except Exception as e:
+        logging.warning(f"⚠️[TRAIN] get_recent_win_rate({symbol}) error: {e}")
+        return None
+
+
 # --- Główna pętla ---
 # Uruchamiamy process trenowania
 def run():
@@ -250,8 +293,18 @@ def run():
                 fetch_and_save_data(symbol)  # Pobierz dane tylko jeśli trzeba trenować
                 train_model(symbol)
                 update_train_time(symbol)
-            # else:
-                # logging.info(f"ℹ️[INFO] Model dla {symbol} aktualny, pomijam trening.")
+            else:
+                # ⚡ Profit-aware check: zły wynik → wymuś retrain nawet przed 24h
+                if not retrain:
+                    win_rate = get_recent_win_rate(symbol)
+                    if win_rate is not None and win_rate < 0.35:
+                        logging.info(
+                            f"⚠️[TRAIN] {symbol}: win_rate={win_rate:.1%} <35% w ostatnich transakcjach "
+                            f"— wymuszam wcześniejszy retrain."
+                        )
+                        fetch_and_save_data(symbol)
+                        train_model(symbol)
+                        update_train_time(symbol)
             last_train = get_last_train_time(symbol)
             # if last_train:
             #     logging.info(f"ℹ️[INFO] Ostatni trening {symbol}: {last_train}")

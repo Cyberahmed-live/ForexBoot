@@ -389,6 +389,22 @@ class MSSQLWriter:
     # ------------------------------------------------------------------
     # BOT LOGS
     # ------------------------------------------------------------------
+    def purge_old_logs(self, days=14):
+        """Usuwa wpisy z bot_logs i bot_diagnostics starsze niż `days` dni."""
+        sql_logs = "DELETE FROM bot_logs WHERE timestamp < DATEADD(day, ?, GETDATE())"
+        sql_diag = "DELETE FROM bot_diagnostics WHERE timestamp < DATEADD(day, ?, GETDATE())"
+        try:
+            with self._lock:
+                con = self._conn()
+                try:
+                    con.execute(sql_logs, (-days,))
+                    con.execute(sql_diag, (-days,))
+                    con.commit()
+                finally:
+                    con.close()
+        except Exception as e:
+            logging.error(f"[purge_old_logs] error: {e}")
+
     def insert_log(self, level, message, symbol=None):
         """Zapisuje wpis logu do bazy."""
         sql = """
@@ -560,6 +576,80 @@ class MSSQLWriter:
     # ------------------------------------------------------------------
     # NPM: Negative Position Manager
     # ------------------------------------------------------------------
+    # ------------------------------------------------------------------
+    # BOT DIAGNOSTICS — strukturalne logowanie decyzji bota
+    # ------------------------------------------------------------------
+
+    def ensure_diagnostics_table(self):
+        """Utwórz tabelę bot_diagnostics jeśli nie istnieje."""
+        sql = """
+        IF NOT EXISTS (SELECT * FROM sys.tables WHERE name = 'bot_diagnostics')
+        CREATE TABLE bot_diagnostics (
+            id             BIGINT IDENTITY(1,1) PRIMARY KEY,
+            timestamp      DATETIME2(3)     NOT NULL DEFAULT GETDATE(),
+            symbol         NVARCHAR(20)     NULL,
+            event_type     NVARCHAR(50)     NOT NULL,
+            ml_decision    INT              NULL,
+            ml_confidence  FLOAT            NULL,
+            filter_blocked BIT              NOT NULL DEFAULT 0,
+            filter_reason  NVARCHAR(200)    NULL,
+            htf_w1         NVARCHAR(10)     NULL,
+            htf_d1         NVARCHAR(10)     NULL,
+            htf_aligned    BIT              NULL,
+            atr            FLOAT            NULL,
+            rr_ratio       FLOAT            NULL,
+            npm_score      FLOAT            NULL,
+            action_taken   NVARCHAR(50)     NULL,
+            extra_json     NVARCHAR(MAX)    NULL
+        )
+        """
+        try:
+            with self._lock:
+                con = self._conn()
+                con.execute(sql)
+                con.commit()
+                con.close()
+        except Exception as e:
+            logging.error(f"[DiagLog] ensure_diagnostics_table error: {e}")
+
+    def insert_diagnostic(self, event_type, symbol=None, ml_decision=None,
+                          ml_confidence=None, filter_blocked=False,
+                          filter_reason=None, htf_w1=None, htf_d1=None,
+                          htf_aligned=None, atr=None, rr_ratio=None,
+                          npm_score=None, action_taken=None, extra_json=None):
+        """Zapisz zdarzenie diagnostyczne do bot_diagnostics."""
+        sql = """
+        INSERT INTO bot_diagnostics
+            (timestamp, symbol, event_type, ml_decision, ml_confidence,
+             filter_blocked, filter_reason, htf_w1, htf_d1, htf_aligned,
+             atr, rr_ratio, npm_score, action_taken, extra_json)
+        VALUES (GETDATE(), ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        """
+        try:
+            aligned_bit = None
+            if htf_aligned is not None:
+                aligned_bit = 1 if htf_aligned else 0
+            params = (
+                symbol, event_type,
+                int(ml_decision) if ml_decision is not None else None,
+                float(ml_confidence) if ml_confidence is not None else None,
+                1 if filter_blocked else 0,
+                filter_reason, htf_w1, htf_d1, aligned_bit,
+                float(atr) if atr is not None else None,
+                float(rr_ratio) if rr_ratio is not None else None,
+                float(npm_score) if npm_score is not None else None,
+                action_taken, extra_json
+            )
+            with self._lock:
+                con = self._conn()
+                try:
+                    con.execute(sql, params)
+                    con.commit()
+                finally:
+                    con.close()
+        except Exception as e:
+            logging.error(f"[DiagLog] insert_diagnostic error: {e}")
+
     def ensure_npm_table(self):
         """Utwórz tabelę negative_position_log jeśli nie istnieje."""
         sql = """
@@ -632,7 +722,7 @@ class MSSQLWriter:
             AVG(CASE WHEN profit_money > 0 THEN duration_hours ELSE NULL END) as avg_recovery_h
         FROM trade_outcomes to2
         WHERE to2.symbol = ?
-          AND to2.max_adverse IS NOT NULL
+          AND to2.max_drawdown IS NOT NULL
         """
         try:
             with self._lock:
