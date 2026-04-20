@@ -740,6 +740,94 @@ class MSSQLWriter:
             logging.error(f"[NPM] get_recovery_stats error: {e}")
             return None
 
+    # ------------------------------------------------------------------
+    # BOT CONFIG — konfiguracja bota w bazie danych
+    # ------------------------------------------------------------------
+
+    def ensure_config_table(self):
+        """Utwórz tabelę bot_config jeśli nie istnieje."""
+        sql = """
+        IF NOT EXISTS (SELECT * FROM sys.tables WHERE name = 'bot_config')
+        CREATE TABLE bot_config (
+            key_name     NVARCHAR(100)  NOT NULL PRIMARY KEY,
+            value        NVARCHAR(500)  NOT NULL,
+            description  NVARCHAR(500)  NULL,
+            updated_at   DATETIME2      NOT NULL DEFAULT GETDATE()
+        )
+        """
+        try:
+            with self._lock:
+                con = self._conn()
+                con.execute(sql)
+                con.commit()
+                con.close()
+        except Exception as e:
+            logging.error(f"[Config] ensure_config_table error: {e}")
+
+    def get_all_config(self):
+        """Pobiera wszystkie klucze konfiguracji jako słownik {key: value}."""
+        try:
+            con = self._conn()
+            try:
+                rows = con.execute(
+                    "SELECT key_name, value FROM bot_config"
+                ).fetchall()
+                return {r[0]: r[1] for r in rows}
+            finally:
+                con.close()
+        except Exception as e:
+            logging.error(f"[Config] get_all_config error: {e}")
+            return {}
+
+    def set_config(self, key_name, value, description=None):
+        """Upsert pojedynczego klucza konfiguracji."""
+        sql = """
+        MERGE bot_config AS tgt
+        USING (SELECT ? AS key_name) AS src ON tgt.key_name = src.key_name
+        WHEN MATCHED THEN
+            UPDATE SET value = ?, updated_at = GETDATE()
+        WHEN NOT MATCHED THEN
+            INSERT (key_name, value, description, updated_at)
+            VALUES (?, ?, ?, GETDATE());
+        """
+        try:
+            with self._lock:
+                con = self._conn()
+                try:
+                    con.execute(sql, (key_name, str(value), key_name, str(value), description))
+                    con.commit()
+                finally:
+                    con.close()
+        except Exception as e:
+            logging.error(f"[Config] set_config error ({key_name}): {e}")
+
+    def load_config_to_dict(self, defaults):
+        """Ładuje konfigurację z DB, zwraca słownik z fallbackiem na `defaults`.
+
+        Klucze nieobecne w DB są zachowane z wartości `defaults`.
+        Typy są zachowane z `defaults` (konwersja string → oryginalny typ).
+        """
+        db_cfg = self.get_all_config()
+        result = dict(defaults)
+        for key, str_val in db_cfg.items():
+            if key not in defaults:
+                continue
+            orig = defaults[key]
+            try:
+                if isinstance(orig, bool):
+                    result[key] = str_val.lower() in ('true', '1', 'yes')
+                elif isinstance(orig, int):
+                    result[key] = int(str_val)
+                elif isinstance(orig, float):
+                    result[key] = float(str_val)
+                elif isinstance(orig, list):
+                    result[key] = [s.strip() for s in str_val.split(',')]
+                else:
+                    result[key] = str_val
+            except (ValueError, TypeError):
+                logging.warning(f"[Config] Błąd konwersji klucza '{key}': '{str_val}' → zostawiam default")
+        return result
+
 
 # ---------------------------------------------------------------------------
 # Logging handler — kieruje logi Pythona do tabeli bot_logs

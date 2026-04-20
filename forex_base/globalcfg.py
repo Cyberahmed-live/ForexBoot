@@ -85,9 +85,40 @@ global_cfg = {
     "version": "1.3.0",                             # Wersja AI Bota
 }
 
+def _load_cfg_from_db(defaults):
+    """Laduje konfiguracje z tabeli bot_config w DB. Fallback do defaults."""
+    try:
+        from forex_v14.db_writer import MSSQLWriter
+        w = MSSQLWriter()
+        db_cfg = w.load_config_to_dict(defaults)
+        # Odtwarz klucze Python-only (nie mozna ich przechowac jako string w DB)
+        db_cfg["timezone"] = pytz.timezone("Etc/UTC")
+        interval = int(db_cfg.get("interval_minutes", INTERVAL_MINUTES))
+        db_cfg["timeframe"] = get_timeframe(interval)
+        db_cfg["tran_incubator_sec"] = (interval * 60) * 5
+        db_cfg["log_file"] = f"forex_logs/forex_bot_{datetime.now().strftime('%Y-%m-%d')}.log"
+        # symbols z DB przechowywane jako CSV string -> przywroc liste
+        symbols_raw = db_cfg.get("symbols", "")
+        if isinstance(symbols_raw, str):
+            db_cfg["symbols"] = [s.strip() for s in symbols_raw.split(",") if s.strip()]
+        import logging
+        logging.getLogger(__name__).info(
+            f"[Config] Zaladowano {len(db_cfg)} kluczy z DB bot_config"
+        )
+        return db_cfg
+    except Exception as e:
+        import logging
+        logging.getLogger(__name__).warning(
+            f"[Config] Fallback na lokalny config (DB niedostepna): {e}"
+        )
+        return defaults
+
+
+global_cfg = _load_cfg_from_db(global_cfg)
+
+
 def get_global_cfg(name):
     # Funkcja zwraca wartość z konfiguracji globalnej o podanej nazwie.
-    # timeframe = get_timeframe(INTERVAL_MINUTES)  # Pobierz odpowiedni timeframe
     return global_cfg.get(name, None)
 
 def get_global_cfg_as_dict():
