@@ -18,7 +18,7 @@ import pyodbc
 # ---------------------------------------------------------------------------
 _DEFAULT_CONN_STR = (
     "DRIVER={ODBC Driver 17 for SQL Server};"
-    "SERVER=localhost;"
+    "SERVER=appdbpri;"
     "DATABASE=ForexBotDB;"
     "Trusted_Connection=yes;"
 )
