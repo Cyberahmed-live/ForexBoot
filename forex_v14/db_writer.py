@@ -828,6 +828,33 @@ class MSSQLWriter:
                 logging.warning(f"[Config] Błąd konwersji klucza '{key}': '{str_val}' → zostawiam default")
         return result
 
+    def pop_retrain_symbols(self):
+        """Pobiera liste symboli do wymuszonego retreningu i atomowo czysci flage.
+
+        Uzycie: UPDATE bot_config SET value='CHFJPY,EURGBP' WHERE key_name='retrain_symbols'
+        Bot pobierze liste przy nastepnej iteracji treningu, wytrenuje i wyzeruje klucz.
+        Zwraca liste symboli (moze byc pusta).
+        """
+        try:
+            conn = self._conn()
+            cur = conn.cursor()
+            cur.execute("SELECT value FROM bot_config WHERE key_name = 'retrain_symbols'")
+            row = cur.fetchone()
+            if not row or not row[0] or not row[0].strip():
+                return []
+            symbols_raw = row[0].strip()
+            # Atomowo wyczysc flage
+            cur.execute(
+                "UPDATE bot_config SET value = '', updated_at = GETUTCDATE() WHERE key_name = 'retrain_symbols'"
+            )
+            conn.commit()
+            result = [s.strip().upper() for s in symbols_raw.split(',') if s.strip()]
+            logging.info(f"[pop_retrain_symbols] Wymuszony retrain dla: {result}")
+            return result
+        except Exception as e:
+            logging.error(f"[pop_retrain_symbols] Blad: {e}")
+            return []
+
 
 # ---------------------------------------------------------------------------
 # Logging handler — kieruje logi Pythona do tabeli bot_logs

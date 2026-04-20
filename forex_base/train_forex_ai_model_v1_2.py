@@ -274,13 +274,30 @@ def get_recent_win_rate(symbol, last_n=20):
 def run():
     set_logging()  # Inicjalizacja logowania
     logging.info(f"ℹ️ Uruchamiamy process trenowania, ver: train_forex_ai_model_v1_2")
-    for symbol in symbols:
+
+    # Sprawdz flage wymuszonych retrenów z DB (retrain_symbols w bot_config)
+    forced_retrain_set = set()
+    try:
+        from forex_v14.db_writer import MSSQLWriter as _MW
+        forced_retrain_set = set(_MW().pop_retrain_symbols())
+        if forced_retrain_set:
+            logging.info(f"[TRAIN] Wymuszony retrain z DB dla: {forced_retrain_set}")
+    except Exception as _fre:
+        logging.warning(f"[TRAIN] Nie mozna pobrac forced_retrain z DB: {_fre}")
+
+    # Dodaj ewentualnie brakujace symbole z flagi (spoza aktualnej listy)
+    all_symbols = list(symbols) + [s for s in forced_retrain_set if s not in symbols]
+
+    for symbol in all_symbols:
         try:
             data_file = os.path.join(output_dir, f"{symbol}.csv")
             model_file = os.path.join(model_dir, f"{symbol}_model.pkl")
             last_train = get_last_train_time(symbol)
             retrain = False
-            if last_train:
+            if symbol in forced_retrain_set:
+                retrain = True  # Wymuszony retrain z DB
+                logging.info(f"⚡[TRAIN] {symbol}: wymuszony retrain z flagi DB")
+            elif last_train:
                 last_train_dt = datetime.fromisoformat(last_train)
                 hours_since = (datetime.now() - last_train_dt).total_seconds() / 3600
                 if hours_since >= 24:
@@ -288,7 +305,7 @@ def run():
             else:
                 retrain = True  # Nigdy nie trenowano
 
-            if retrain and should_retrain(model_file, data_file, retrain_interval_hours=24):
+            if retrain and (symbol in forced_retrain_set or should_retrain(model_file, data_file, retrain_interval_hours=24)):
                 logging.info(f"ℹ️[INFO] Pobieranie danych i trening modelu dla {symbol} (nowe dane lub minęło >=24h)")
                 fetch_and_save_data(symbol)  # Pobierz dane tylko jeśli trzeba trenować
                 train_model(symbol)
