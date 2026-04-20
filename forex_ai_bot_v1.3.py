@@ -780,8 +780,25 @@ def update_trailing_sl():
 
         # === NPM: Negative Position Manager ===
         if r_multiple < 0 and profit < 0:
+
+            # --- Fix B: Timeout fallback — działa bez get_data() ---
+            if _pos_duration_h >= TIME_EXIT_HOURS and r_multiple <= NPM_ALERT_R:
+                logging.warning(
+                    f"⏰ NPM TIMEOUT FALLBACK #{ticket} ({symbol}): "
+                    f"{_pos_duration_h:.1f}h >= {TIME_EXIT_HOURS}h, R={r_multiple:.2f} <= {NPM_ALERT_R}. "
+                    f"Zamykam pozycję bez danych rynkowych."
+                )
+                _close_position(pos)
+                continue
+
             data = get_data(symbol)
             if data is None:
+                # Fix A: loguj błąd zamiast cichego continue
+                logging.error(
+                    f"❌ NPM #{ticket} ({symbol}): get_data() zwróciło None — "
+                    f"NPM pominięty. R={r_multiple:.2f}, profit={profit:.2f}, "
+                    f"duration={_pos_duration_h:.1f}h"
+                )
                 continue
 
             # --- NPM Score ---
