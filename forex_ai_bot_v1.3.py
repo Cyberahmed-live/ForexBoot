@@ -71,6 +71,69 @@ NPM_TIGHTEN_SL_FACTOR   = float(get_global_cfg("npm_tighten_sl_r_factor"))# ALER
 NPM_WEEKEND_BLOCK_HOUR  = int(get_global_cfg("npm_weekend_block_hour"))   # Friday block hour
 NPM_WEEKEND_RECOVERY    = bool(get_global_cfg("npm_weekend_recovery"))    # Enable weekend window
 
+
+def reload_cfg():
+    """Odswiezenie konfiguracji z bazy danych na poczatku kazdej iteracji.
+    Aktualizuje wszystkie globalne stale. Fallback: wartosc pozostaje bez zmian."""
+    global SYMBOLS, LOT, LOT_MIN, TP_ATR_MULTIPLIER, SL_ATR_MULTIPLIER, ATR_MIN
+    global PREDICT_PROBA_THRESHOLD, MIN_HOLD_SECONDS, MIN_RR_RATIO, SPREAD_FILTER_PCT
+    global VOL_BLOCK_START, VOL_BLOCK_END, SYMBOL_COOLDOWN_H, MAX_DAILY_LOSSES, MAX_OPEN_POSITIONS
+    global PARTIAL_CLOSE_R, PARTIAL_CLOSE_PCT, TIME_EXIT_HOURS
+    global TRAIL_BE_R, TRAIL_LOCK_R, TRAIL_LOCK_FRAC, TRAIL_ATR_R, TRAIL_ATR_FACTOR
+    global TRAIL_TIGHT_R, TRAIL_TIGHT_FACTOR, TRAILING_UPDATE_SEC
+    global NPM_ALERT_R, NPM_CRITICAL_R, NPM_HARD_CAP_R, NPM_ALERT_NPM, NPM_CRITICAL_NPM
+    global NPM_SCALED_50_R, NPM_SCALED_100_R, NPM_TIGHTEN_SL_FACTOR
+    global NPM_WEEKEND_BLOCK_HOUR, NPM_WEEKEND_RECOVERY, CANDLES, CANDLES_MAX
+    try:
+        _db_cfg = MSSQLWriter().get_all_config()
+        if not _db_cfg:
+            return
+        def _f(k, default):   return float(_db_cfg[k])      if k in _db_cfg else default
+        def _i(k, default):   return int(_db_cfg[k])        if k in _db_cfg else default
+        def _b(k, default):   return _db_cfg[k].lower() == 'true' if k in _db_cfg else default
+        def _s(k, default):   return _db_cfg[k]             if k in _db_cfg else default
+        SYMBOLS              = [x.strip() for x in _s('symbols','').split(',') if x.strip()] or SYMBOLS
+        LOT                  = _f('lot',                    LOT)
+        LOT_MIN              = _f('min_lot',                LOT_MIN)
+        TP_ATR_MULTIPLIER    = _f('tp_atr_multiplier',      TP_ATR_MULTIPLIER)
+        SL_ATR_MULTIPLIER    = _f('sl_atr_multiplier',      SL_ATR_MULTIPLIER)
+        ATR_MIN              = _f('atr_min',                ATR_MIN)
+        TRAILING_UPDATE_SEC  = _i('trade_timeout',          TRAILING_UPDATE_SEC)
+        PREDICT_PROBA_THRESHOLD = _f('predict_proba_threshold', PREDICT_PROBA_THRESHOLD)
+        MIN_HOLD_SECONDS     = _f('tran_incubator_sec',     MIN_HOLD_SECONDS)
+        CANDLES              = _i('candles',                CANDLES)
+        CANDLES_MAX          = _i('candles_max',            CANDLES_MAX)
+        MIN_RR_RATIO         = _f('min_rr_ratio',           MIN_RR_RATIO)
+        SPREAD_FILTER_PCT    = _f('spread_filter_pct',      SPREAD_FILTER_PCT)
+        VOL_BLOCK_START      = _i('volatility_block_start', VOL_BLOCK_START)
+        VOL_BLOCK_END        = _i('volatility_block_end',   VOL_BLOCK_END)
+        SYMBOL_COOLDOWN_H    = _f('symbol_cooldown_hours',  SYMBOL_COOLDOWN_H)
+        MAX_DAILY_LOSSES     = _i('max_daily_losses',       MAX_DAILY_LOSSES)
+        MAX_OPEN_POSITIONS   = _i('max_open_positions',     MAX_OPEN_POSITIONS)
+        PARTIAL_CLOSE_R      = _f('partial_close_r',        PARTIAL_CLOSE_R)
+        PARTIAL_CLOSE_PCT    = _f('partial_close_pct',      PARTIAL_CLOSE_PCT)
+        TIME_EXIT_HOURS      = _f('time_exit_hours',        TIME_EXIT_HOURS)
+        TRAIL_BE_R           = _f('trail_breakeven_r',      TRAIL_BE_R)
+        TRAIL_LOCK_R         = _f('trail_lock_r',           TRAIL_LOCK_R)
+        TRAIL_LOCK_FRAC      = _f('trail_lock_fraction',    TRAIL_LOCK_FRAC)
+        TRAIL_ATR_R          = _f('trail_atr_r',            TRAIL_ATR_R)
+        TRAIL_ATR_FACTOR     = _f('trail_atr_factor',       TRAIL_ATR_FACTOR)
+        TRAIL_TIGHT_R        = _f('trail_tight_r',          TRAIL_TIGHT_R)
+        TRAIL_TIGHT_FACTOR   = _f('trail_tight_factor',     TRAIL_TIGHT_FACTOR)
+        NPM_ALERT_R          = _f('npm_alert_r',            NPM_ALERT_R)
+        NPM_CRITICAL_R       = _f('npm_critical_r',         NPM_CRITICAL_R)
+        NPM_HARD_CAP_R       = _f('npm_hard_cap_r',         NPM_HARD_CAP_R)
+        NPM_ALERT_NPM        = _f('npm_alert_npm_threshold',   NPM_ALERT_NPM)
+        NPM_CRITICAL_NPM     = _f('npm_critical_npm_threshold', NPM_CRITICAL_NPM)
+        NPM_SCALED_50_R      = _f('npm_scaled_exit_50_r',   NPM_SCALED_50_R)
+        NPM_SCALED_100_R     = _f('npm_scaled_exit_100_r',  NPM_SCALED_100_R)
+        NPM_TIGHTEN_SL_FACTOR= _f('npm_tighten_sl_r_factor',NPM_TIGHTEN_SL_FACTOR)
+        NPM_WEEKEND_BLOCK_HOUR = _i('npm_weekend_block_hour', NPM_WEEKEND_BLOCK_HOUR)
+        NPM_WEEKEND_RECOVERY = _b('npm_weekend_recovery',   NPM_WEEKEND_RECOVERY)
+    except Exception as _reload_err:
+        logging.warning(f"[reload_cfg] Blad odswiezania config z DB (stare wartosci): {_reload_err}")
+
+
 # === Trwałość extreme_price_dict (śledzenie najlepszej ceny pozycji) ===
 try:
     with open("extreme_price_dict.pkl", "rb") as f:
@@ -1270,6 +1333,7 @@ try:
     tran_log_last_update = None
 
     while True:
+        reload_cfg()  # Odswież konfigurację z DB na początku każdej iteracji
         # 👉 Sprawdź czy jest 23:59:00 lub później
         now = datetime.now()
         if now.hour == 23 and now.minute == 59:
