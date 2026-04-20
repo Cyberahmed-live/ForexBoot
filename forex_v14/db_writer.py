@@ -281,9 +281,9 @@ class MSSQLWriter:
                  result, profit, done)
             VALUES (?,?,?,?,?,?,?, ?,?,?,?,?, ?,?,?)
         """
-        params = (now, symbol, direction, price, sl, tp, lot,
-                  prediction, status, order_id, confidence, atr,
-                  result, profit, done)
+        params = (now, symbol, direction[:10], price, sl, tp, lot,
+                  str(prediction)[:50], str(status)[:30], order_id, confidence, atr,
+                  str(result)[:5], profit, str(done)[:5])
         with self._lock:
             con = self._conn()
             try:
