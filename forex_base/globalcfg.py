@@ -28,7 +28,7 @@ global_cfg = {
     # Poprzedni broker (.pro):
     # "symbols": ['AUDUSD.pro', 'AUDCAD.pro', ... 'GOLD.pro', 'SILVER.pro'],
     # Capital.com (bez sufiksu, zloto=XAUUSD, srebro=XAGUSD):
-    "symbols": ['AUDUSD', 'AUDCAD', 'AUDCHF', 'AUDJPY', 'AUDNZD', 'EURUSD', 'EURCHF', 'EURJPY', 'EURPLN', 'EURCAD', 'EURNZD', 'EURAUD', 'GBPUSD', 'GBPJPY', 'GBPCAD', 'GBPCHF', 'GBPAUD', 'GBPNZD', 'CHFPLN', 'USDJPY', 'USDCHF', 'USDCAD', 'USDPLN', 'NZDUSD', 'NZDCAD', 'CADJPY', 'XAUUSD', 'XAGUSD'],  # Capital.com demo
+    "symbols": ['AUDUSD', 'AUDCAD', 'AUDCHF', 'AUDJPY', 'AUDNZD', 'EURUSD', 'EURCHF', 'EURJPY', 'EURPLN', 'EURCAD', 'EURNZD', 'EURAUD', 'GBPUSD', 'GBPJPY', 'GBPCAD', 'GBPCHF', 'GBPAUD', 'GBPNZD', 'CHFPLN', 'USDJPY', 'USDCHF', 'USDCAD', 'USDPLN', 'NZDUSD', 'NZDCAD', 'CADJPY', 'XAUUSD', 'XAGUSD', 'CHFJPY', 'EURGBP', 'CADCHF', 'NZDJPY'],  # Capital.com demo
     "interval_minutes": INTERVAL_MINUTES,           # Interwał w minutach
     "timeframe": get_timeframe(INTERVAL_MINUTES),   # Pobierz odpowiedni timeframe
     "tran_incubator_sec": (INTERVAL_MINUTES * 60) * 5, # Minimalny czas w sekundach trzymania pozycji (5 interwału)
