@@ -30,6 +30,7 @@ MODEL_PATH              = get_global_cfg("model_path")                   # Ście
 MAGIC                   = get_global_cfg("magic")                        # Magic number dla transakcji
 LOT                     = float(get_global_cfg("lot"))                   # Rozmiar lota dla transakcji
 LOT_MIN                 = float(get_global_cfg("min_lot"))               # Minimalny rozmiar lota dla transakcji
+LOT_MIN_SYMBOL          = {}                                              # Minimalny lot per-instrument (min_lot_SYMBOL w bot_config)
 TP_ATR_MULTIPLIER       = float(get_global_cfg("tp_atr_multiplier"))     # Mnożnik ATR dla Take Profit 2.5
 SL_ATR_MULTIPLIER       = float(get_global_cfg("sl_atr_multiplier"))     # Mnożnik ATR dla Stop Loss 1.5
 ATR_MIN                 = float(get_global_cfg("atr_min"))               # Minimalny ATR do wejścia na rynek
@@ -75,7 +76,7 @@ NPM_WEEKEND_RECOVERY    = bool(get_global_cfg("npm_weekend_recovery"))    # Enab
 def reload_cfg():
     """Odswiezenie konfiguracji z bazy danych na poczatku kazdej iteracji.
     Aktualizuje wszystkie globalne stale. Fallback: wartosc pozostaje bez zmian."""
-    global SYMBOLS, LOT, LOT_MIN, TP_ATR_MULTIPLIER, SL_ATR_MULTIPLIER, ATR_MIN
+    global SYMBOLS, LOT, LOT_MIN, LOT_MIN_SYMBOL, TP_ATR_MULTIPLIER, SL_ATR_MULTIPLIER, ATR_MIN
     global PREDICT_PROBA_THRESHOLD, MIN_HOLD_SECONDS, MIN_RR_RATIO, SPREAD_FILTER_PCT
     global VOL_BLOCK_START, VOL_BLOCK_END, SYMBOL_COOLDOWN_H, MAX_DAILY_LOSSES, MAX_OPEN_POSITIONS
     global PARTIAL_CLOSE_R, PARTIAL_CLOSE_PCT, TIME_EXIT_HOURS
@@ -95,6 +96,7 @@ def reload_cfg():
         SYMBOLS              = [x.strip() for x in _s('symbols','').split(',') if x.strip()] or SYMBOLS
         LOT                  = _f('lot',                    LOT)
         LOT_MIN              = _f('min_lot',                LOT_MIN)
+        LOT_MIN_SYMBOL       = {k[len('min_lot_'):]: float(v) for k, v in _db_cfg.items() if k.startswith('min_lot_') and v}
         TP_ATR_MULTIPLIER    = _f('tp_atr_multiplier',      TP_ATR_MULTIPLIER)
         SL_ATR_MULTIPLIER    = _f('sl_atr_multiplier',      SL_ATR_MULTIPLIER)
         ATR_MIN              = _f('atr_min',                ATR_MIN)
@@ -349,11 +351,17 @@ def calculate_lot_size(symbol, sl_distance, risk_percent=1.0, confidence=0.5):
         scaled_lot = math.floor(scaled_lot / vol_step) * vol_step
         scaled_lot = max(vol_min, round(scaled_lot, 2))
 
+    # --- 7. Minimalny lot per-symbol (LOT_MIN_SYMBOL lub globalny LOT_MIN) ---
+    effective_min = LOT_MIN_SYMBOL.get(symbol, LOT_MIN)
+    if scaled_lot < effective_min:
+        logging.info(f"📊 LOT CALC {symbol}: lot={scaled_lot:.2f} ponizej min={effective_min:.2f} → wymuszam min")
+        scaled_lot = effective_min
+
     logging.info(
         f"📊 LOT CALC {symbol}: equity={equity:.0f}, risk={risk_money:.0f} ({risk_percent}%), "
         f"SL_dist={sl_distance:.5f}, loss/lot={loss_per_lot:.2f}, "
         f"base_lot={base_lot:.2f}, conf={confidence:.2f}→scale={conf_scale:.2f}, "
-        f"final={scaled_lot:.2f}, margin_free={margin_free:.0f}, leverage={leverage}"
+        f"final={scaled_lot:.2f}, min={effective_min:.2f}, margin_free={margin_free:.0f}, leverage={leverage}"
     )
     return scaled_lot
 
