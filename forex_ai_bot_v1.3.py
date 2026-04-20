@@ -1358,6 +1358,15 @@ try:
         if not is_trading_time():
             logging.info("🌙 Poza godzinami handlu, czekam 5 minut...")
             print("🌙 Poza godzinami handlu — pauza 5 minut...")
+            # Wymuszone retreny z flagi DB — dzialaj rowniez poza godzinami handlu
+            try:
+                _forced = mssql.pop_retrain_symbols()
+                if _forced:
+                    logging.info(f"⚡ Wymuszony retrain poza godzinami handlu: {_forced}")
+                    retrain_models()
+                    initialize_mt5()
+            except Exception as _frt_e:
+                logging.error(f"❌ Forced retrain (poza godzinami) error: {_frt_e}")
             # Heartbeat (MS SQL)
             try:
                 account = mt5.account_info()
