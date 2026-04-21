@@ -20,7 +20,7 @@ def log_trade(symbol, direction, price, sl, tp, volume, prediction, retcode, res
     try:
         _mssql_writer.insert_trade(
             symbol=symbol,
-            direction="BUY" if direction == 1 else "SELL",
+            direction=direction,
             price=price, sl=sl, tp=tp, lot=volume,
             prediction=str(prediction), status=str(retcode),
             order_id=result if isinstance(result, int) else 0,
