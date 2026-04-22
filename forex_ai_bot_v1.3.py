@@ -1403,19 +1403,20 @@ try:
             daily_loss_count = 0
             daily_loss_date = today_str
 
-        # --- Variant C: Aktualizuj straty z historii MT5 ---
+        # --- Variant C: Aktualizuj straty z historii MT5 (od początku dnia kalendarzowego) ---
         try:
-            _loss_from = datetime.now() - timedelta(days=1)
-            _loss_deals = mt5.history_deals_get(_loss_from, datetime.now())
+            _midnight = datetime.combine(datetime.now().date(), datetime.min.time())
+            _loss_deals = mt5.history_deals_get(_midnight, datetime.now())
             if _loss_deals:
                 _today_losses = 0
                 for _d in _loss_deals:
                     if _d.entry == 1 and _d.profit < 0:  # entry=1 → close, profit<0 → loss
-                        _today_losses += 1
-                        # Zaktualizuj cooldown symbolu
                         _d_time = datetime.fromtimestamp(_d.time)
-                        if _d.symbol not in symbol_last_loss or _d_time > symbol_last_loss[_d.symbol]:
-                            symbol_last_loss[_d.symbol] = _d_time
+                        if _d_time >= _midnight:  # tylko od północy bieżącego dnia
+                            _today_losses += 1
+                            # Zaktualizuj cooldown symbolu
+                            if _d.symbol not in symbol_last_loss or _d_time > symbol_last_loss[_d.symbol]:
+                                symbol_last_loss[_d.symbol] = _d_time
                 daily_loss_count = _today_losses
         except Exception as _loss_e:
             logging.error(f"❌ Loss tracker error: {_loss_e}")
