@@ -326,10 +326,10 @@ def calculate_lot_size(symbol, sl_distance, risk_percent=1.0, confidence=0.5):
     base_lot = risk_money / loss_per_lot
 
     # --- 4. Skalowanie wg confidence ---
-    # confidence 0.6 (próg) → 50% base_lot
-    # confidence 0.8+ → 100% base_lot
-    # Liniowa interpolacja between [0.5, 1.0]
-    conf_min = 0.5
+    # confidence na progu (0.75) → 75% base_lot
+    # confidence 1.0 → 100% base_lot
+    # Liniowa interpolacja between [0.75, 1.0]
+    conf_min = 0.75
     conf_max = 1.0
     conf_clamped = max(PREDICT_PROBA_THRESHOLD, min(confidence, 1.0))
     conf_scale = conf_min + (conf_max - conf_min) * ((conf_clamped - PREDICT_PROBA_THRESHOLD) / (1.0 - PREDICT_PROBA_THRESHOLD))
@@ -498,7 +498,7 @@ def place_order(symbol, action, atr, pred_proba):
     #     return
 
     sl_distance = abs(price - sl)
-    lot = calculate_lot_size(symbol, sl_distance, risk_percent=1.0, confidence=pred_proba)
+    lot = calculate_lot_size(symbol, sl_distance, risk_percent=2.0, confidence=pred_proba)
 
     # WALIDACJA I LOGOWANIE
     logging.info(
