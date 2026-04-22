@@ -276,7 +276,8 @@ class WisdomAggregator:
     # Rejestracja wyniku transakcji
     # ------------------------------------------------------------------
     def record_trade_outcome(self, trade_id, symbol, direction, **kwargs):
-        self._db.insert_trade_outcome(trade_id, symbol, direction, **kwargs)
+        if not self._db._trade_outcome_exists(trade_id):
+            self._db.insert_trade_outcome(trade_id, symbol, direction, **kwargs)
 
     # ------------------------------------------------------------------
     # Agregacja skuteczności formacji (co 24h)
