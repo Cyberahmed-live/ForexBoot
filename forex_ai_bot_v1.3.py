@@ -31,6 +31,7 @@ MAGIC                   = get_global_cfg("magic")                        # Magic
 LOT                     = float(get_global_cfg("lot"))                   # Rozmiar lota dla transakcji
 LOT_MIN                 = float(get_global_cfg("min_lot"))               # Minimalny rozmiar lota dla transakcji
 LOT_MIN_SYMBOL          = {}                                              # Minimalny lot per-instrument (min_lot_SYMBOL w bot_config)
+CONF_THRESHOLD_SYMBOL   = {}                                              # Per-symbol próg confidence (conf_threshold_SYMBOL w bot_config)
 TP_ATR_MULTIPLIER       = float(get_global_cfg("tp_atr_multiplier"))     # Mnożnik ATR dla Take Profit 2.5
 SL_ATR_MULTIPLIER       = float(get_global_cfg("sl_atr_multiplier"))     # Mnożnik ATR dla Stop Loss 1.5
 ATR_MIN                 = float(get_global_cfg("atr_min"))               # Minimalny ATR do wejścia na rynek
@@ -76,7 +77,7 @@ NPM_WEEKEND_RECOVERY    = bool(get_global_cfg("npm_weekend_recovery"))    # Enab
 def reload_cfg():
     """Odswiezenie konfiguracji z bazy danych na poczatku kazdej iteracji.
     Aktualizuje wszystkie globalne stale. Fallback: wartosc pozostaje bez zmian."""
-    global SYMBOLS, LOT, LOT_MIN, LOT_MIN_SYMBOL, TP_ATR_MULTIPLIER, SL_ATR_MULTIPLIER, ATR_MIN
+    global SYMBOLS, LOT, LOT_MIN, LOT_MIN_SYMBOL, CONF_THRESHOLD_SYMBOL, TP_ATR_MULTIPLIER, SL_ATR_MULTIPLIER, ATR_MIN
     global PREDICT_PROBA_THRESHOLD, MIN_HOLD_SECONDS, MIN_RR_RATIO, SPREAD_FILTER_PCT
     global VOL_BLOCK_START, VOL_BLOCK_END, SYMBOL_COOLDOWN_H, MAX_DAILY_LOSSES, MAX_OPEN_POSITIONS
     global PARTIAL_CLOSE_R, PARTIAL_CLOSE_PCT, TIME_EXIT_HOURS
@@ -97,6 +98,7 @@ def reload_cfg():
         LOT                  = _f('lot',                    LOT)
         LOT_MIN              = _f('min_lot',                LOT_MIN)
         LOT_MIN_SYMBOL       = {k[len('min_lot_'):]: float(v) for k, v in _db_cfg.items() if k.startswith('min_lot_') and v}
+        CONF_THRESHOLD_SYMBOL = {k[len('conf_threshold_'):]: float(v) for k, v in _db_cfg.items() if k.startswith('conf_threshold_') and v}
         TP_ATR_MULTIPLIER    = _f('tp_atr_multiplier',      TP_ATR_MULTIPLIER)
         SL_ATR_MULTIPLIER    = _f('sl_atr_multiplier',      SL_ATR_MULTIPLIER)
         ATR_MIN              = _f('atr_min',                ATR_MIN)
@@ -1508,7 +1510,8 @@ try:
                     logging.error(f"❌ Wisdom observation error for {symbol}: {we}")
 
                 # --- Filtr confidence (loguj do diagnostyki zawsze) ---
-                if decision is not None and prob is not None and prob <= PREDICT_PROBA_THRESHOLD:
+                _eff_threshold = CONF_THRESHOLD_SYMBOL.get(symbol, PREDICT_PROBA_THRESHOLD)
+                if decision is not None and prob is not None and prob <= _eff_threshold:
                     logging.info(f"ℹ️ Confidence {prob:.2f} below threshold {PREDICT_PROBA_THRESHOLD}")
                     try:
                         mssql.insert_diagnostic(
@@ -1517,14 +1520,14 @@ try:
                             ml_decision=decision,
                             ml_confidence=prob,
                             filter_blocked=True,
-                            filter_reason=f"conf={prob:.3f} < {PREDICT_PROBA_THRESHOLD}",
+                            filter_reason=f"conf={prob:.3f} < {_eff_threshold:.3f}",
                             atr=atr,
                             action_taken="SKIP"
                         )
                     except Exception:
                         pass
 
-                if atr is not None and decision is not None and prob is not None and prob > PREDICT_PROBA_THRESHOLD:
+                if atr is not None and decision is not None and prob is not None and prob > _eff_threshold:
                     # 🧭 Filtr HTF W1→D1: zrelaksowany — blokuj tylko gdy W1 PRZECIWNY do ML.
                     # D1 neutralny (FLAT) jest dozwolony — blokada = D1 PRZECIWNY + W1 w tym samym kierunku.
                     htf = wisdom.get_higher_tf_trend(symbol)
