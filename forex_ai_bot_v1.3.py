@@ -33,6 +33,8 @@ LOT                     = float(get_global_cfg("lot"))                   # Rozmi
 LOT_MIN                 = float(get_global_cfg("min_lot"))               # Minimalny rozmiar lota dla transakcji
 LOT_MIN_SYMBOL          = {}                                              # Minimalny lot per-instrument (min_lot_SYMBOL w bot_config)
 CONF_THRESHOLD_SYMBOL   = {}                                              # Per-symbol próg confidence (conf_threshold_SYMBOL w bot_config)
+CONF_THRESHOLD_MIN      = 0.60                                             # Minimalny próg confidence - poniżej skip, powyżej LOT_MIN
+CONF_THRESHOLD_NORMAL   = 0.75                                             # Normalny próg confidence - powyżej normalny LOT
 TP_ATR_MULTIPLIER       = float(get_global_cfg("tp_atr_multiplier"))     # Mnożnik ATR dla Take Profit 2.5
 SL_ATR_MULTIPLIER       = float(get_global_cfg("sl_atr_multiplier"))     # Mnożnik ATR dla Stop Loss 1.5
 ATR_MIN                 = float(get_global_cfg("atr_min"))               # Minimalny ATR do wejścia na rynek
@@ -78,7 +80,7 @@ NPM_WEEKEND_RECOVERY    = bool(get_global_cfg("npm_weekend_recovery"))    # Enab
 def reload_cfg():
     """Odswiezenie konfiguracji z bazy danych na poczatku kazdej iteracji.
     Aktualizuje wszystkie globalne stale. Fallback: wartosc pozostaje bez zmian."""
-    global SYMBOLS, BLACKLIST_SYMBOLS, LOT, LOT_MIN, LOT_MIN_SYMBOL, CONF_THRESHOLD_SYMBOL, TP_ATR_MULTIPLIER, SL_ATR_MULTIPLIER, ATR_MIN
+    global SYMBOLS, BLACKLIST_SYMBOLS, LOT, LOT_MIN, LOT_MIN_SYMBOL, CONF_THRESHOLD_SYMBOL, CONF_THRESHOLD_MIN, CONF_THRESHOLD_NORMAL, TP_ATR_MULTIPLIER, SL_ATR_MULTIPLIER, ATR_MIN
     global PREDICT_PROBA_THRESHOLD, MIN_HOLD_SECONDS, MIN_RR_RATIO, SPREAD_FILTER_PCT
     global VOL_BLOCK_START, VOL_BLOCK_END, SYMBOL_COOLDOWN_H, MAX_DAILY_LOSSES, MAX_OPEN_POSITIONS
     global PARTIAL_CLOSE_R, PARTIAL_CLOSE_PCT, TIME_EXIT_HOURS
@@ -111,6 +113,8 @@ def reload_cfg():
         LOT_MIN              = _f('min_lot',                LOT_MIN)
         LOT_MIN_SYMBOL       = {k[len('min_lot_'):]: float(v) for k, v in _db_cfg.items() if k.startswith('min_lot_') and v}
         CONF_THRESHOLD_SYMBOL = {k[len('conf_threshold_'):]: float(v) for k, v in _db_cfg.items() if k.startswith('conf_threshold_') and v}
+        CONF_THRESHOLD_MIN   = _f('conf_threshold_min',    CONF_THRESHOLD_MIN)
+        CONF_THRESHOLD_NORMAL = _f('conf_threshold_normal', CONF_THRESHOLD_NORMAL)
         TP_ATR_MULTIPLIER    = _f('tp_atr_multiplier',      TP_ATR_MULTIPLIER)
         SL_ATR_MULTIPLIER    = _f('sl_atr_multiplier',      SL_ATR_MULTIPLIER)
         ATR_MIN              = _f('atr_min',                ATR_MIN)
@@ -290,7 +294,7 @@ def check_margin_available(symbol, lot):
 
     return True
 
-def calculate_lot_size(symbol, sl_distance, risk_percent=1.0, confidence=0.5):
+def calculate_lot_size(symbol, sl_distance, risk_percent=1.0, confidence=0.5, use_min_lot=False):
     """Oblicz wielkość pozycji na podstawie equity, odległości SL i confidence.
 
     Args:
@@ -298,6 +302,7 @@ def calculate_lot_size(symbol, sl_distance, risk_percent=1.0, confidence=0.5):
         sl_distance: odległość SL od ceny wejścia W JEDNOSTKACH CENOWYCH (np. 0.0050 = 50 pips)
         risk_percent: % equity do zaryzykowania na transakcję (domyślnie 1%)
         confidence: pewność modelu ML (0.0–1.0)
+        use_min_lot: jeśli True, użyj LOT_MIN zamiast normalnego LOT (dla słabszych sygnałów 0.60-0.75)
 
     Returns:
         float: wielkość lota zaokrąglona do volume_step
@@ -366,10 +371,16 @@ def calculate_lot_size(symbol, sl_distance, risk_percent=1.0, confidence=0.5):
         scaled_lot = max(vol_min, round(scaled_lot, 2))
 
     # --- 7. Minimalny lot per-symbol (LOT_MIN_SYMBOL lub globalny LOT_MIN) ---
-    effective_min = LOT_MIN_SYMBOL.get(symbol, LOT_MIN)
-    if scaled_lot < effective_min:
-        logging.info(f"📊 LOT CALC {symbol}: lot={scaled_lot:.2f} ponizej min={effective_min:.2f} → wymuszam min")
+    # Jeśli use_min_lot=True (sygnał 0.60-0.75), zawsze użyj LOT_MIN
+    if use_min_lot:
+        effective_min = LOT_MIN_SYMBOL.get(symbol, LOT_MIN)
         scaled_lot = effective_min
+        logging.info(f"📊 LOT CALC {symbol}: WEAK signal confidence={confidence:.2f} → LOT_MIN={effective_min:.2f}")
+    else:
+        effective_min = LOT_MIN_SYMBOL.get(symbol, LOT_MIN)
+        if scaled_lot < effective_min:
+            logging.info(f"📊 LOT CALC {symbol}: lot={scaled_lot:.2f} ponizej min={effective_min:.2f} → wymuszam min")
+            scaled_lot = effective_min
 
     logging.info(
         f"📊 LOT CALC {symbol}: equity={equity:.0f}, risk={risk_money:.0f} ({risk_percent}%), "
@@ -390,7 +401,7 @@ def calculate_fibo_tp(df, action, fibo_level=TP_ATR_MULTIPLIER, window=CANDLES):
         tp = low + (high - low) * (1 - fibo_level)
     return tp
 
-def place_order(symbol, action, atr, pred_proba):
+def place_order(symbol, action, atr, pred_proba, use_min_lot=False):
     if not mt5.symbol_select(symbol, True):
         logging.warning(f"⚠️ Nie udało się aktywować symbolu {symbol}")
         return
@@ -512,7 +523,7 @@ def place_order(symbol, action, atr, pred_proba):
     #     return
 
     sl_distance = abs(price - sl)
-    lot = calculate_lot_size(symbol, sl_distance, risk_percent=2.0, confidence=pred_proba)
+    lot = calculate_lot_size(symbol, sl_distance, risk_percent=2.0, confidence=pred_proba, use_min_lot=use_min_lot)
 
     # WALIDACJA I LOGOWANIE
     logging.info(
@@ -1566,25 +1577,40 @@ try:
                 except Exception as we:
                     logging.error(f"❌ Wisdom observation error for {symbol}: {we}")
 
-                # --- Filtr confidence (loguj do diagnostyki zawsze) ---
-                _eff_threshold = CONF_THRESHOLD_SYMBOL.get(symbol, PREDICT_PROBA_THRESHOLD)
-                if decision is not None and prob is not None and prob <= _eff_threshold:
-                    logging.info(f"ℹ️ Confidence {prob:.2f} below threshold {PREDICT_PROBA_THRESHOLD}")
-                    try:
-                        mssql.insert_diagnostic(
-                            event_type="FILTER_CONFIDENCE",
-                            symbol=symbol,
-                            ml_decision=decision,
-                            ml_confidence=prob,
-                            filter_blocked=True,
-                            filter_reason=f"conf={prob:.3f} < {_eff_threshold:.3f}",
-                            atr=atr,
-                            action_taken="SKIP"
-                        )
-                    except Exception:
-                        pass
+                # --- Filtr confidence z progami: MIN (0.60), NORMAL (0.75) ---
+                # <0.60 → SKIP (zbyt słaby)
+                # 0.60-0.75 → LOT_MIN (mały lot)
+                # >=0.75 → LOT normalny (silny sygnał)
+                _eff_threshold = CONF_THRESHOLD_SYMBOL.get(symbol, CONF_THRESHOLD_NORMAL)
+                _use_min_lot = False
+                
+                if decision is not None and prob is not None:
+                    if prob < CONF_THRESHOLD_MIN:
+                        # ❌ SKIP - za słaby sygnał
+                        logging.info(f"ℹ️ Confidence {prob:.2f} < MIN threshold {CONF_THRESHOLD_MIN} — SKIP")
+                        try:
+                            mssql.insert_diagnostic(
+                                event_type="FILTER_CONFIDENCE",
+                                symbol=symbol,
+                                ml_decision=decision,
+                                ml_confidence=prob,
+                                filter_blocked=True,
+                                filter_reason=f"conf={prob:.3f} < MIN={CONF_THRESHOLD_MIN:.3f}",
+                                atr=atr,
+                                action_taken="SKIP"
+                            )
+                        except Exception:
+                            pass
+                    elif prob < _eff_threshold:
+                        # 🟡 WEAK - użyj LOT_MIN (0.60-0.75)
+                        logging.info(f"🟡 Weak confidence {prob:.2f} ({CONF_THRESHOLD_MIN}-{_eff_threshold}) → LOT_MIN")
+                        _use_min_lot = True
+                    else:
+                        # ✅ STRONG - użyj normalny LOT (>=0.75)
+                        logging.info(f"✅ Strong confidence {prob:.2f} >= {_eff_threshold} → normalny LOT")
+                        _use_min_lot = False
 
-                if atr is not None and decision is not None and prob is not None and prob > _eff_threshold:
+                if atr is not None and decision is not None and prob is not None and prob >= CONF_THRESHOLD_MIN:
                     # 🧭 Filtr HTF W1→D1: zrelaksowany — blokuj tylko gdy W1 PRZECIWNY do ML.
                     # D1 neutralny (FLAT) jest dozwolony — blokada = D1 PRZECIWNY + W1 w tym samym kierunku.
                     htf = wisdom.get_higher_tf_trend(symbol)
@@ -1657,7 +1683,7 @@ try:
                                     f"({_open_count}/{MAX_OPEN_POSITIONS}). Pomijam."
                                 )
                             else:
-                                place_order(symbol, decision, atr, prob)
+                                place_order(symbol, decision, atr, prob, use_min_lot=_use_min_lot)
                 else:
                     logging.info(f"ℹ️ Brak decyzji dla {symbol}, predykcja: {prob}")
 
