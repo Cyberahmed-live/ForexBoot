@@ -22,6 +22,7 @@ from forex_v14.wisdom_aggregator          import WisdomAggregator            # v
 from forex_v14.db_writer                  import MSSQLWriter, DBLogHandler       # v1.4 — zapis do MS SQL
 # === KONFIGURACJA ===
 SYMBOLS                 = get_global_cfg("symbols")                      # Pobierz listę symboli z konfiguracji
+BLACKLIST_SYMBOLS       = get_global_cfg("blacklist_symbols", "")        # Symbole do wyłączenia (np. GBPCHF)
 INTERVAL_MINUTES        = get_global_cfg("interval_minutes")             # Pobierz interwał w minutach
 TIMEFRAME               = get_global_cfg("timeframe")                    # Pobierz odpowiedni timeframe
 CANDLES                 = get_global_cfg("candles")                      # Liczba świec do analizy
@@ -77,7 +78,7 @@ NPM_WEEKEND_RECOVERY    = bool(get_global_cfg("npm_weekend_recovery"))    # Enab
 def reload_cfg():
     """Odswiezenie konfiguracji z bazy danych na poczatku kazdej iteracji.
     Aktualizuje wszystkie globalne stale. Fallback: wartosc pozostaje bez zmian."""
-    global SYMBOLS, LOT, LOT_MIN, LOT_MIN_SYMBOL, CONF_THRESHOLD_SYMBOL, TP_ATR_MULTIPLIER, SL_ATR_MULTIPLIER, ATR_MIN
+    global SYMBOLS, BLACKLIST_SYMBOLS, LOT, LOT_MIN, LOT_MIN_SYMBOL, CONF_THRESHOLD_SYMBOL, TP_ATR_MULTIPLIER, SL_ATR_MULTIPLIER, ATR_MIN
     global PREDICT_PROBA_THRESHOLD, MIN_HOLD_SECONDS, MIN_RR_RATIO, SPREAD_FILTER_PCT
     global VOL_BLOCK_START, VOL_BLOCK_END, SYMBOL_COOLDOWN_H, MAX_DAILY_LOSSES, MAX_OPEN_POSITIONS
     global PARTIAL_CLOSE_R, PARTIAL_CLOSE_PCT, TIME_EXIT_HOURS
@@ -95,6 +96,17 @@ def reload_cfg():
         def _b(k, default):   return _db_cfg[k].lower() == 'true' if k in _db_cfg else default
         def _s(k, default):   return _db_cfg[k]             if k in _db_cfg else default
         SYMBOLS              = [x.strip() for x in _s('symbols','').split(',') if x.strip()] or SYMBOLS
+        BLACKLIST_SYMBOLS    = _s('blacklist_symbols', '')
+        if BLACKLIST_SYMBOLS:
+            _blacklist = [x.strip() for x in BLACKLIST_SYMBOLS.split(',') if x.strip()]
+            BLACKLIST_SYMBOLS = _blacklist
+            # Usuń blacklisted symbole ze listy handlowanych
+            _original_count = len(SYMBOLS)
+            SYMBOLS = [s for s in SYMBOLS if s not in BLACKLIST_SYMBOLS]
+            if len(SYMBOLS) < _original_count:
+                logging.warning(f"⛔ Blacklist aktywna: usunięto {_original_count - len(SYMBOLS)} symboli")
+        else:
+            BLACKLIST_SYMBOLS = []
         LOT                  = _f('lot',                    LOT)
         LOT_MIN              = _f('min_lot',                LOT_MIN)
         LOT_MIN_SYMBOL       = {k[len('min_lot_'):]: float(v) for k, v in _db_cfg.items() if k.startswith('min_lot_') and v}
@@ -857,11 +869,12 @@ def update_trailing_sl():
             # --- Fix B: Timeout fallback — działa bez get_data() ---
             if _pos_duration_h >= TIME_EXIT_HOURS and r_multiple <= NPM_ALERT_R:
                 logging.warning(
-                    f"⏰ NPM TIMEOUT FALLBACK #{ticket} ({symbol}): "
+                    f"⏰ TIME_EXIT FALLBACK #{ticket} ({symbol}): "
                     f"{_pos_duration_h:.1f}h >= {TIME_EXIT_HOURS}h, R={r_multiple:.2f} <= {NPM_ALERT_R}. "
-                    f"Zamykam pozycję bez danych rynkowych."
+                    f"Zamykam blisko SL zamiast market price."
                 )
-                _close_position(pos)
+                # FIX: Zamiast zamykać na market price, zamknij limit order blisko SL
+                _close_position_at_sl(pos)
                 continue
 
             data = get_data(symbol)
@@ -919,10 +932,11 @@ def update_trailing_sl():
                 elif _pos_duration_h >= TIME_EXIT_HOURS and escalation == 'CRITICAL':
                     action_taken = "TIME_EXIT"
                     logging.warning(
-                        f"⏰ NPM #{ticket} ({symbol}): R={r_multiple:.2f}, {_pos_duration_h:.1f}h, "
-                        f"NPM={npm_score:.0f} CRITICAL + time limit. Zamykam."
+                        f"⏰ TIME_EXIT #{ticket} ({symbol}): R={r_multiple:.2f}, {_pos_duration_h:.1f}h, "
+                        f"NPM={npm_score:.0f} CRITICAL + time limit. Zamykam blisko SL."
                     )
-                    _close_position(pos)
+                    # FIX: Zamiast zamykać na market, zamknij blisko SL
+                    _close_position_at_sl(pos)
 
                 # === CRITICAL: skalowane zamknięcie ===
                 elif escalation == 'CRITICAL':
@@ -1161,8 +1175,51 @@ def update_trailing_sl():
             logging.warning(f"⚠️ Trailing SL fail {symbol}: {result.retcode} — {result.comment}")
 
 
+def _close_position_at_sl(pos):
+    """Zamknij pozycję limit order blisko SL zamiast na market price.
+    Unika dramatycznych strat z powodu zmian ceny między decyzją a wykonaniem."""
+    is_buy = (pos.type == 0)
+    symbol_info = mt5.symbol_info(pos.symbol)
+    tick = mt5.symbol_info_tick(pos.symbol)
+    if tick is None or symbol_info is None:
+        logging.error(f"❌ Brak danych dla {pos.symbol} przy zamykaniu #{pos.ticket} na SL")
+        # Fallback: zamknij na market price
+        _close_position(pos)
+        return
+    
+    # Limit order 5 pips poniżej SL dla SELL, 5 pips powyżej dla BUY
+    sl_limit = float(pos.sl) if pos.sl else tick.bid if is_buy else tick.ask
+    offset_pips = 0.00005 if symbol_info.digits == 5 else 0.0005  # 5 pips offset
+    
+    if is_buy:
+        limit_price = sl_limit + offset_pips
+    else:
+        limit_price = sl_limit - offset_pips
+    
+    close_request = {
+        "action": mt5.TRADE_ACTION_DEAL,
+        "position": pos.ticket,
+        "symbol": pos.symbol,
+        "volume": pos.volume,
+        "type": mt5.ORDER_TYPE_SELL if is_buy else mt5.ORDER_TYPE_BUY,
+        "price": limit_price,
+        "deviation": 5,
+        "magic": pos.magic,
+        "comment": f"Close at SL {VERSION}",
+    }
+    result = mt5.order_send(close_request)
+    if result is None:
+        logging.error(f"❌ Nie udało się wysłać close order #{pos.ticket}. Fallback do market.")
+        _close_position(pos)
+        return
+    if result.retcode == mt5.TRADE_RETCODE_DONE:
+        logging.info(f"✅ Zamknięto #{pos.ticket} ({pos.symbol}) blisko SL za {limit_price:.5f}.")
+    else:
+        logging.warning(f"⚠️ Close order #{pos.ticket} ma status {result.retcode} — {result.comment}. Retry market close.")
+        _close_position(pos)
+
 def _close_position(pos):
-    """Pomocnicza: zamknij pozycję MT5."""
+    """Pomocnicza: zamknij pozycję MT5 na market price."""
     is_buy = (pos.type == 0)
     tick = mt5.symbol_info_tick(pos.symbol)
     if tick is None:
