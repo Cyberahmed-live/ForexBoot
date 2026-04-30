@@ -1484,6 +1484,18 @@ try:
     while True:
         reload_cfg()  # Odswież konfigurację z DB na początku każdej iteracji
         
+        # ⚠️ CLOSE BLACKLISTED POSITIONS: Check if any open positions are on blacklist
+        if len(BLACKLIST_SYMBOLS) > 0:
+            try:
+                _open_pos = mt5.positions_get()
+                if _open_pos:
+                    for pos in _open_pos:
+                        if pos.symbol in BLACKLIST_SYMBOLS:
+                            logging.warning(f"🛑 Zamykam pozycję na blacklist'owanym symbolu: {pos.symbol} (ticket: {pos.ticket})")
+                            _close_position(pos)
+            except Exception as e:
+                logging.error(f"Błąd przy zamykaniu pozycji blacklist'owanych: {e}")
+        
         # 🔍 DEBUG: Log current SYMBOLS and BLACKLIST on every iteration
         if len(BLACKLIST_SYMBOLS) > 0:
             logging.info(f"🚫 BLACKLIST aktywny: {BLACKLIST_SYMBOLS}, SYMBOLS count after filter: {len(SYMBOLS)}")
