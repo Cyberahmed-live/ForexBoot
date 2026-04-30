@@ -44,7 +44,7 @@ TIMEZONE                = get_global_cfg("timezone")                     # Stref
 VERSION                 = get_global_cfg("version")                      # Wersja bota
 LOG_FILE                = get_global_cfg("log_file")                     # Plik logów
 MIN_HOLD_SECONDS        = float(get_global_cfg("tran_incubator_sec"))    # Minimalny czas trzymania pozycji w sekundach (5 świec H4)
-# --- 4-stopniowy trailing SL ---
+# --- 4-stopniowy trailing SL (dla zysków) ---
 TRAIL_BE_R              = float(get_global_cfg("trail_breakeven_r"))      # Stage 1: break-even
 TRAIL_LOCK_R            = float(get_global_cfg("trail_lock_r"))           # Stage 2: lock profit
 TRAIL_LOCK_FRAC         = float(get_global_cfg("trail_lock_fraction"))    # Stage 2: gwarantowana frakcja R
@@ -52,6 +52,10 @@ TRAIL_ATR_R             = float(get_global_cfg("trail_atr_r"))            # Stag
 TRAIL_ATR_FACTOR        = float(get_global_cfg("trail_atr_factor"))       # Stage 3: ATR factor
 TRAIL_TIGHT_R           = float(get_global_cfg("trail_tight_r"))          # Stage 4: tight trail
 TRAIL_TIGHT_FACTOR      = float(get_global_cfg("trail_tight_factor"))     # Stage 4: ATR factor
+# --- Dynamic Negative Trailing Stop (dla strat) ---
+TRAIL_NEG_ACTIVE_R      = float(get_global_cfg("trail_neg_active_r", "-0.5"))     # Активuj negative trail na R <= -0.5
+TRAIL_NEG_MAX_LOSS_R    = float(get_global_cfg("trail_neg_max_loss_r", "-2.0"))   # Hard cap: nie pozwól gorzej niż -2.0R
+TRAIL_NEG_FACTOR        = float(get_global_cfg("trail_neg_factor", "0.5"))         # 0.5 ATR od najgorszej ceny
 # --- Variant C: filtry wejścia ---
 MIN_RR_RATIO            = float(get_global_cfg("min_rr_ratio"))           # Min R:R (TP/SL >= 2.0)
 SPREAD_FILTER_PCT       = float(get_global_cfg("spread_filter_pct"))      # Spread > 20% SL → block
@@ -85,7 +89,8 @@ def reload_cfg():
     global VOL_BLOCK_START, VOL_BLOCK_END, SYMBOL_COOLDOWN_H, MAX_DAILY_LOSSES, MAX_OPEN_POSITIONS
     global PARTIAL_CLOSE_R, PARTIAL_CLOSE_PCT, TIME_EXIT_HOURS
     global TRAIL_BE_R, TRAIL_LOCK_R, TRAIL_LOCK_FRAC, TRAIL_ATR_R, TRAIL_ATR_FACTOR
-    global TRAIL_TIGHT_R, TRAIL_TIGHT_FACTOR, TRAILING_UPDATE_SEC
+    global TRAIL_TIGHT_R, TRAIL_TIGHT_FACTOR, TRAIL_NEG_ACTIVE_R, TRAIL_NEG_MAX_LOSS_R, TRAIL_NEG_FACTOR
+    global TRAILING_UPDATE_SEC
     global NPM_ALERT_R, NPM_CRITICAL_R, NPM_HARD_CAP_R, NPM_ALERT_NPM, NPM_CRITICAL_NPM
     global NPM_SCALED_50_R, NPM_SCALED_100_R, NPM_TIGHTEN_SL_FACTOR
     global NPM_WEEKEND_BLOCK_HOUR, NPM_WEEKEND_RECOVERY, CANDLES, CANDLES_MAX
@@ -140,6 +145,9 @@ def reload_cfg():
         TRAIL_ATR_FACTOR     = _f('trail_atr_factor',       TRAIL_ATR_FACTOR)
         TRAIL_TIGHT_R        = _f('trail_tight_r',          TRAIL_TIGHT_R)
         TRAIL_TIGHT_FACTOR   = _f('trail_tight_factor',     TRAIL_TIGHT_FACTOR)
+        TRAIL_NEG_ACTIVE_R   = _f('trail_neg_active_r',     TRAIL_NEG_ACTIVE_R)
+        TRAIL_NEG_MAX_LOSS_R = _f('trail_neg_max_loss_r',   TRAIL_NEG_MAX_LOSS_R)
+        TRAIL_NEG_FACTOR     = _f('trail_neg_factor',       TRAIL_NEG_FACTOR)
         NPM_ALERT_R          = _f('npm_alert_r',            NPM_ALERT_R)
         NPM_CRITICAL_R       = _f('npm_critical_r',         NPM_CRITICAL_R)
         NPM_HARD_CAP_R       = _f('npm_hard_cap_r',         NPM_HARD_CAP_R)
@@ -1103,8 +1111,68 @@ def update_trailing_sl():
                     _rc = _partial_result.retcode if _partial_result else "None"
                     logging.warning(f"⚠️ Partial close fail #{ticket} ({symbol}): {_rc}")
 
-        # --- Stage 0: R < 1.0 — oryginalny SL, nic nie robimy ---
+        # --- Stage 0 / Negative Trailing: R < TRAIL_BE_R
         if r_multiple < TRAIL_BE_R:
+            # === NEGATIVE TRAILING: Dynamiczny trailing stop dla strat ===
+            # Gdy R pada poniżej TRAIL_NEG_ACTIVE_R (np. -0.5), aktywuj dynamic loss trailing
+            # Śledź najgorszą cenę i ograniczaj nią do max TRAIL_NEG_MAX_LOSS_R (np. -2.0R)
+            
+            if r_multiple <= TRAIL_NEG_ACTIVE_R and r_multiple > TRAIL_NEG_MAX_LOSS_R:
+                data = get_data(symbol)
+                if data is not None:
+                    atr = calculate_atr(data)
+                    
+                    # Nowy SL: najgorsza cena + buffer (TRAIL_NEG_FACTOR * ATR)
+                    if is_buy:
+                        neg_sl = extreme + atr * TRAIL_NEG_FACTOR  # dla SELL (short), extreme to min cena
+                    else:
+                        neg_sl = extreme - atr * TRAIL_NEG_FACTOR  # dla BUY (long), extreme to max cena
+                    
+                    neg_sl = round(neg_sl, digits)
+                    current_sl = pos.sl
+                    
+                    # Sprawdzenie czy SL poprawia się (zbliża do entry, tzn. zmniejsza stratę)
+                    sl_improves_loss = (
+                        (is_buy and (current_sl is None or current_sl == 0 or neg_sl > current_sl)) or
+                        (not is_buy and (current_sl is None or current_sl == 0 or neg_sl < current_sl))
+                    )
+                    
+                    if sl_improves_loss:
+                        # Dodatkowa ochrona: nie pozwól gorsze niż TRAIL_NEG_MAX_LOSS_R
+                        hard_limit_sl = entry_price - one_r * abs(TRAIL_NEG_MAX_LOSS_R) if is_buy \
+                                       else entry_price + one_r * abs(TRAIL_NEG_MAX_LOSS_R)
+                        
+                        # Wybierz lepszy (bliższy entry) z dwóch opcji
+                        if is_buy:
+                            neg_sl = max(neg_sl, hard_limit_sl)
+                        else:
+                            neg_sl = min(neg_sl, hard_limit_sl)
+                        
+                        logging.info(
+                            f"🔴 DynNegTrail | #{ticket} ({symbol}): R={r_multiple:.2f}, "
+                            f"SL: {current_sl:.{digits}f} → {neg_sl:.{digits}f}, "
+                            f"worst={extreme:.{digits}f}, ATR={atr:.{digits}f}"
+                        )
+                        
+                        modify_request = {
+                            "action": mt5.TRADE_ACTION_SLTP,
+                            "position": ticket,
+                            "sl": neg_sl,
+                            "tp": pos.tp,
+                            "symbol": symbol,
+                            "magic": pos.magic,
+                            "comment": f"DynNegTrail R{r_multiple:.1f} {VERSION}",
+                        }
+                        result = mt5.order_send(modify_request)
+                        if result and result.retcode == mt5.TRADE_RETCODE_DONE:
+                            logging.info(
+                                f"✅ DynNegTrail #{ticket} ({symbol}): SL zaktualizowany. "
+                                f"R={r_multiple:.2f}, max loss limit={TRAIL_NEG_MAX_LOSS_R}R"
+                            )
+                        else:
+                            _rc = result.retcode if result else "None"
+                            logging.warning(f"⚠️ DynNegTrail SL modify fail #{ticket}: {_rc}")
+            
             continue
 
         # --- Oblicz ATR dla trailing ---
