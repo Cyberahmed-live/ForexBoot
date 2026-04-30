@@ -325,4 +325,17 @@ Remote: Up to date with origin/main
   - Automated deployment to \\Appdbpri\c$\Program Files\Python310\forex_env
   - Includes verification and cleanup
   - Prevents missed updates
+
+2026-04-30 21:00+ - ✅ CRITICAL BLACKLIST BUG FIX & DEPLOYMENT SUCCESS
+  - **Issue Found:** Trade #102 GBPCHF opened at 18:03 despite blacklist (loaded at 20:41)
+  - **Root Cause:** reload_cfg() not called before main trading loop
+  - **Fix #1:** Added reload_cfg() before while loop (commit 343eef9)
+  - **Fix #2:** Auto-close positions on blacklist (commit 0e70319)
+  - **Fix #3:** UTF-8 encoding for Windows (commit 4e50046)
+  - **Deployment:** All fixes synced to production (21:04:50 UTC)
+  - **Result:** Trade #102 GBPCHF CLOSED at 21:07:30
+    - Final loss: -213.1 pips (vs -280 before close)
+    - Blacklist respected: No new blacklist trades opened
+    - Daily loss limit: Activated (2/2), bot paused
+  - **Status:** ✅ All fixes verified working on appdbpri
 ```
