@@ -505,8 +505,8 @@ def place_order(symbol, action, atr, pred_proba, use_min_lot=False):
                                     filter_blocked=True,
                                     filter_reason=f"ATR={atr:.5f} < ATR_MIN={ATR_MIN}",
                                     atr=atr, action_taken="SKIP")
-        except Exception:
-            pass
+        except Exception as e:
+            logging.warning(f"[diagnostic] Błąd zapisu FILTER_ATR: {e}")
         return
     
     # --- Variant C: Filtr R:R (min TP/SL ratio) ---
@@ -525,8 +525,8 @@ def place_order(symbol, action, atr, pred_proba, use_min_lot=False):
                                         filter_blocked=True,
                                         filter_reason=f"RR={rr_ratio:.2f} < {MIN_RR_RATIO}",
                                         atr=atr, rr_ratio=rr_ratio, action_taken="SKIP")
-            except Exception:
-                pass
+            except Exception as e:
+                logging.warning(f"[diagnostic] Błąd zapisu FILTER_RR: {e}")
             return
 
     # --- Variant C: Filtr spreadu (spread > 20% SL → block) ---
@@ -1726,8 +1726,8 @@ try:
                                 atr=atr,
                                 action_taken="SKIP"
                             )
-                        except Exception:
-                            pass
+                        except Exception as e:
+                            logging.warning(f"[diagnostic] Error writing FILTER_CONFIDENCE: {e}")
                     elif prob < _eff_threshold:
                         # 🟡 WEAK - użyj LOT_MIN (0.60-0.75)
                         logging.info(f"🟡 Weak confidence {prob:.2f} ({CONF_THRESHOLD_MIN}-{_eff_threshold}) → LOT_MIN")
@@ -1780,8 +1780,8 @@ try:
                                 htf_w1=w1, htf_d1=d1, htf_aligned=False,
                                 atr=atr, action_taken="SKIP"
                             )
-                        except Exception:
-                            pass
+                        except Exception as e:
+                            logging.warning(f"[diagnostic] Error writing HTF_BLOCK: {e}")
                     else:
                         logging.info(
                             f"✅ {symbol} — ML={ml_direction} OK vs HTF "
