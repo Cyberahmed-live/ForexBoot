@@ -1412,6 +1412,11 @@ try:
 
     while True:
         reload_cfg()  # Odswież konfigurację z DB na początku każdej iteracji
+        
+        # 🔍 DEBUG: Log current SYMBOLS and BLACKLIST on every iteration
+        if len(BLACKLIST_SYMBOLS) > 0:
+            logging.info(f"🚫 BLACKLIST aktywny: {BLACKLIST_SYMBOLS}, SYMBOLS count after filter: {len(SYMBOLS)}")
+        
         # 👉 Sprawdź czy jest 23:59:00 lub później
         now = datetime.now()
         if now.hour == 23 and now.minute == 59:
@@ -1515,6 +1520,11 @@ try:
 
         for symbol in SYMBOLS:
             try:
+                # 🚫 SAFETY CHECK: Double-verify blacklist
+                if BLACKLIST_SYMBOLS and symbol in BLACKLIST_SYMBOLS:
+                    logging.error(f"🚨 KRITICAL: {symbol} on BLACKLIST but in SYMBOLS loop! Skipping.")
+                    continue
+                
                 LOG_FILE = get_global_cfg("log_file")  # Pobierz ścieżkę do pliku loga
                 # print(f"\n⏰ [{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}] — {symbol} analiza...")
                 
