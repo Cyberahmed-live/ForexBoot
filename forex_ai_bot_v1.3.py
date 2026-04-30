@@ -53,9 +53,9 @@ TRAIL_ATR_FACTOR        = float(get_global_cfg("trail_atr_factor"))       # Stag
 TRAIL_TIGHT_R           = float(get_global_cfg("trail_tight_r"))          # Stage 4: tight trail
 TRAIL_TIGHT_FACTOR      = float(get_global_cfg("trail_tight_factor"))     # Stage 4: ATR factor
 # --- Dynamic Negative Trailing Stop (dla strat) ---
-TRAIL_NEG_ACTIVE_R      = float(get_global_cfg("trail_neg_active_r", "-0.5"))     # Активuj negative trail na R <= -0.5
-TRAIL_NEG_MAX_LOSS_R    = float(get_global_cfg("trail_neg_max_loss_r", "-2.0"))   # Hard cap: nie pozwól gorzej niż -2.0R
-TRAIL_NEG_FACTOR        = float(get_global_cfg("trail_neg_factor", "0.5"))         # 0.5 ATR od najgorszej ceny
+TRAIL_NEG_ACTIVE_R      = float(get_global_cfg("trail_neg_active_r") or "-0.5")     # Aktivuj negative trail na R <= -0.5
+TRAIL_NEG_MAX_LOSS_R    = float(get_global_cfg("trail_neg_max_loss_r") or "-2.0")   # Hard cap: nie pozwól gorzej niż -2.0R
+TRAIL_NEG_FACTOR        = float(get_global_cfg("trail_neg_factor") or "0.5")         # 0.5 ATR od najgorszej ceny
 # --- Variant C: filtry wejścia ---
 MIN_RR_RATIO            = float(get_global_cfg("min_rr_ratio"))           # Min R:R (TP/SL >= 2.0)
 SPREAD_FILTER_PCT       = float(get_global_cfg("spread_filter_pct"))      # Spread > 20% SL → block
