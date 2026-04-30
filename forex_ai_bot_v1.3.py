@@ -1474,6 +1474,9 @@ _wisdom_last_outcome_update = datetime.now()
 _wisdom_last_aggregation = datetime.now()
 _bot_start_time = time.time()
 
+# === INITIAL CONFIG LOAD FROM DATABASE ===
+reload_cfg()  # Załaduj config z DB na samym starcie, aby uzyskać świeży blacklist
+
 try:
     last_check = {sym: None for sym in SYMBOLS}
     tran_log_last_update = None
