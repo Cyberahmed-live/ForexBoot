@@ -1,3 +1,4 @@
+# -*- coding: utf-8 -*-
 # forex_ai_bot_full.py
 import os
 import sys
@@ -575,7 +576,7 @@ def place_order(symbol, action, atr, pred_proba, use_min_lot=False):
 
     if result is None:
         logging.error(f"❌ order_send() zwrócił None dla {symbol}. Sprawdź połączenie z MT5. {request}")
-        print(f"❌ order_send() zwrócił None dla {symbol}. Sprawdź połączenie z MT5. {request}")
+        print(f"[ERROR] order_send() zwrócił None dla {symbol}. Sprawdź połączenie z MT5. {request}")
         reconnect_mt5()
         return
     
@@ -608,7 +609,7 @@ def place_order(symbol, action, atr, pred_proba, use_min_lot=False):
         # attempt += 1
     else:
         logging.error(f"❌ Błąd zlecenia {symbol}: {result.retcode} — {result.comment}")
-        print(f"❌ Błąd zlecenia {symbol}: {result.retcode} — {result.comment}")
+        print(f"[ERROR] Błąd zlecenia {symbol}: {result.retcode} - {result.comment}")
 
     logging.error(f"❌ Nie udało się zrealizować zlecenia dla {symbol}.")
 
@@ -1440,7 +1441,7 @@ def update_closed_positions_status(days_back=5, last_update=None):
    
 initialize_mt5()
 logging.info(f"📈 Bot AI version: {VERSION} uruchomiony")
-print(f"📈 Bot AI version: {VERSION} uruchomiony")
+print(f"[START] Bot AI version: {VERSION} uruchomiony")
 
 # === WISDOM AGGREGATOR (v1.4) + MS SQL ===
 mssql = MSSQLWriter()
@@ -1453,7 +1454,7 @@ _db_log_handler = DBLogHandler(mssql, min_level=logging.INFO)
 logging.getLogger().addHandler(_db_log_handler)
 wisdom = WisdomAggregator(db=mssql)
 logging.info(f"🧠 Wisdom Aggregator aktywny (MS SQL). Obserwacje w bazie: {wisdom.count_observations()}")
-print(f"🧠 Wisdom Aggregator aktywny (MS SQL). Obserwacje w bazie: {wisdom.count_observations()}")
+print(f"[WISDOM] Wisdom Aggregator aktywny (MS SQL). Obserwacje w bazie: {wisdom.count_observations()}")
 
 # === SYNCHRONIZACJA MT5 → DB przy starcie ===
 try:
@@ -1464,7 +1465,7 @@ try:
     _sync_count += mssql.sync_deals_from_mt5(_sync_deals)
     if _sync_count > 0:
         logging.info(f"🔄 Synchronizacja MT5→DB: {_sync_count} rekordów uzupełnionych.")
-        print(f"🔄 Synchronizacja MT5→DB: {_sync_count} rekordów uzupełnionych.")
+        print(f"[SYNC] Synchronizacja MT5->DB: {_sync_count} rekordów uzupełnionych.")
     else:
         logging.info("🔄 Synchronizacja MT5→DB: baza aktualna.")
 except Exception as _se:
@@ -1821,6 +1822,6 @@ except KeyboardInterrupt:
     print("🛑 Bot zatrzymany przez użytkownika.")
 except Exception as e:
     logging.critical(f"❌ Fatal error: {e}", exc_info=True)
-    print(f"❌ Fatal error: {e}")
+    print(f"[FATAL] Fatal error: {e}")
 finally:
     shutdown_mt5()
