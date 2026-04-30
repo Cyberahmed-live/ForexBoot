@@ -22,7 +22,7 @@ from forex_v14.wisdom_aggregator          import WisdomAggregator            # v
 from forex_v14.db_writer                  import MSSQLWriter, DBLogHandler       # v1.4 — zapis do MS SQL
 # === KONFIGURACJA ===
 SYMBOLS                 = get_global_cfg("symbols")                      # Pobierz listę symboli z konfiguracji
-BLACKLIST_SYMBOLS       = get_global_cfg("blacklist_symbols", "")        # Symbole do wyłączenia (np. GBPCHF)
+BLACKLIST_SYMBOLS       = get_global_cfg("blacklist_symbols") or ""      # Symbole do wyłączenia (np. GBPCHF)
 INTERVAL_MINUTES        = get_global_cfg("interval_minutes")             # Pobierz interwał w minutach
 TIMEFRAME               = get_global_cfg("timeframe")                    # Pobierz odpowiedni timeframe
 CANDLES                 = get_global_cfg("candles")                      # Liczba świec do analizy
