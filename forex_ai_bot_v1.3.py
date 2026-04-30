@@ -176,22 +176,54 @@ daily_loss_count = 0       # Licznik strat w bieżącym dniu
 daily_loss_date = None     # Data ostatniego resetu licznika
 partial_closed_tickets = set()  # Pozycje już częściowo zamknięte
 npm_scaled_exit_tickets = set()  # Pozycje z NPM skalowanym zamknięciem 50%
-# === LOGOWANIE ===
-# Utwórz katalog na logi, jeśli nie istnieje
-os.makedirs(get_global_cfg("logs_dir"), exist_ok=True)
 
-# Konfiguracja logowania
-logging.basicConfig(
-    filename=LOG_FILE,  # Pobierz ścieżkę do pliku loga
-    level=logging.INFO,
-    format='%(asctime)s [%(levelname)s] %(message)s',
-    encoding='utf-8'
-)
+# === LOGOWANIE - DYNAMIC LOG FILE HANDLER ===
+_last_log_date = None
+_log_file_handler = None
+
+def setup_logging():
+    """Setup file logging with daily rotation support."""
+    global LOG_FILE, _last_log_date, _log_file_handler
+    
+    # Regenerate LOG_FILE path based on current date
+    LOG_FILE = f"{get_global_cfg('logs_dir')}/forex_bot_{datetime.now().strftime('%Y-%m-%d')}.log"
+    os.makedirs(get_global_cfg("logs_dir"), exist_ok=True)
+    
+    # Remove old file handler if exists
+    if _log_file_handler:
+        logging.getLogger().removeHandler(_log_file_handler)
+        _log_file_handler.close()
+    
+    # Create new file handler
+    _log_file_handler = logging.FileHandler(LOG_FILE, mode='a', encoding='utf-8')
+    _log_file_handler.setLevel(logging.INFO)
+    formatter = logging.Formatter('%(asctime)s [%(levelname)s] %(message)s')
+    _log_file_handler.setFormatter(formatter)
+    
+    # Add to root logger
+    root_logger = logging.getLogger()
+    if not root_logger.hasHandlers():
+        root_logger.setLevel(logging.INFO)
+    root_logger.addHandler(_log_file_handler)
+    
+    _last_log_date = datetime.now().date()
+    logging.info(f"Logowanie do pliku: {LOG_FILE}")
+
+def check_and_rotate_logs():
+    """Sprawdzenie czy zmienił się dzień - jeśli tak, otwórz nowy plik loga."""
+    global _last_log_date
+    today = datetime.now().date()
+    if _last_log_date != today:
+        setup_logging()
+
+# Initial logging setup
+setup_logging()
 
 print("================== Konfiguracja globalna ==================")
 print("")
 print(get_global_cfg_as_dict()) # Loguj całą konfigurację globalną
 print("===========================================================")
+
 
 # === FUNKCJE ===
 def initialize_mt5():
@@ -1484,6 +1516,7 @@ try:
 
     while True:
         reload_cfg()  # Odswież konfigurację z DB na początku każdej iteracji
+        check_and_rotate_logs()  # Sprawdź czy zmienił się dzień - jeśli tak, zarotuj log file
         
         # ⚠️ CLOSE BLACKLISTED POSITIONS: Check if any open positions are on blacklist
         if len(BLACKLIST_SYMBOLS) > 0:
