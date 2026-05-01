@@ -205,9 +205,20 @@ def setup_logging():
     
     # Add to root logger
     root_logger = logging.getLogger()
-    if not root_logger.hasHandlers():
-        root_logger.setLevel(logging.INFO)
+    root_logger.setLevel(logging.INFO)
+
+    # Usun istniejace StreamHandlery (stdout/stderr) dodane przez basicConfig lub importy
+    for h in root_logger.handlers[:]:
+        if isinstance(h, logging.StreamHandler) and not isinstance(h, logging.FileHandler):
+            root_logger.removeHandler(h)
+
     root_logger.addHandler(_log_file_handler)
+
+    # Stdout/stderr: tylko CRITICAL (bledy krytyczne wymagajace natychmiastowej uwagi)
+    _console_handler = logging.StreamHandler()
+    _console_handler.setLevel(logging.CRITICAL)
+    _console_handler.setFormatter(logging.Formatter('%(asctime)s [%(levelname)s] %(message)s'))
+    root_logger.addHandler(_console_handler)
     
     _last_log_date = datetime.now().date()
     logging.info(f"Logowanie do pliku: {LOG_FILE}")
@@ -222,10 +233,9 @@ def check_and_rotate_logs():
 # Initial logging setup
 setup_logging()
 
-print("================== Konfiguracja globalna ==================")
-print("")
-print(get_global_cfg_as_dict()) # Loguj całą konfigurację globalną
-print("===========================================================")
+logging.info("================== Konfiguracja globalna ==================")
+logging.info(str(get_global_cfg_as_dict()))
+logging.info("===========================================================")
 
 
 # === FUNKCJE ===
