@@ -855,6 +855,56 @@ class MSSQLWriter:
             logging.error(f"[pop_retrain_symbols] Blad: {e}")
             return []
 
+    def ensure_version_history_table(self):
+        """Utwórz tabelę bot_version_history jeśli nie istnieje."""
+        sql = """
+        IF NOT EXISTS (SELECT * FROM sys.tables WHERE name = 'bot_version_history')
+        CREATE TABLE bot_version_history (
+            id          INT IDENTITY(1,1) PRIMARY KEY,
+            version     NVARCHAR(20)   NOT NULL,
+            deployed_at DATETIME2      NOT NULL DEFAULT GETUTCDATE(),
+            description NVARCHAR(500)  NULL
+        )
+        """
+        try:
+            with self._lock:
+                con = self._conn()
+                con.execute(sql)
+                con.commit()
+                con.close()
+        except Exception as e:
+            logging.error(f"[Version] ensure_version_history_table error: {e}")
+
+    def record_version(self, version, description=None):
+        """Aktualizuje bot_config[version] i wstawia wpis do bot_version_history (jesli wersja nowa)."""
+        try:
+            with self._lock:
+                con = self._conn()
+                cur = con.cursor()
+                # Aktualizuj bot_config
+                cur.execute("""
+                    MERGE bot_config AS tgt
+                    USING (SELECT ? AS key_name) AS src ON tgt.key_name = src.key_name
+                    WHEN MATCHED THEN
+                        UPDATE SET value = ?, updated_at = GETUTCDATE()
+                    WHEN NOT MATCHED THEN
+                        INSERT (key_name, value, description, updated_at)
+                        VALUES (?, ?, 'Aktualna wersja bota', GETUTCDATE());
+                """, ('version', version, 'version', version))
+                # Wstaw do historii tylko jesli tej wersji jeszcze nie ma
+                cur.execute(
+                    "SELECT COUNT(*) FROM bot_version_history WHERE version = ?", (version,)
+                )
+                if cur.fetchone()[0] == 0:
+                    cur.execute(
+                        "INSERT INTO bot_version_history (version, deployed_at, description) VALUES (?, GETUTCDATE(), ?)",
+                        (version, description or '')
+                    )
+                con.commit()
+                con.close()
+        except Exception as e:
+            logging.error(f"[Version] record_version error: {e}")
+
 
 # ---------------------------------------------------------------------------
 # Logging handler — kieruje logi Pythona do tabeli bot_logs

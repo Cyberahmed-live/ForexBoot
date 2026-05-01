@@ -22,7 +22,7 @@ import forex_base.common as common         # Importuj moduł common
 from forex_v14.wisdom_aggregator          import WisdomAggregator            # v1.4 — obserwacja rynku
 from forex_v14.db_writer                  import MSSQLWriter, DBLogHandler       # v1.4 — zapis do MS SQL
 # === WERSJA ===
-BOT_VERSION             = "1.3.0.3"                                      # Wersja bota (auto-increment przy deploy)                                      # Wersja bota (auto-increment przy deploy)                                      # Wersja bota (auto-increment przy deploy)
+BOT_VERSION             = "1.3.0.4"                                      # Wersja bota (auto-increment przy deploy)                                      # Wersja bota (auto-increment przy deploy)                                      # Wersja bota (auto-increment przy deploy)                                      # Wersja bota (auto-increment przy deploy)
 
 # === KONFIGURACJA ===
 SYMBOLS                 = get_global_cfg("symbols")                      # Pobierz listę symboli z konfiguracji
@@ -1492,6 +1492,8 @@ print(f"[START] Bot AI version: {VERSION} uruchomiony")
 mssql = MSSQLWriter()
 mssql.ensure_npm_table()          # NPM: utwórz tabelę jeśli nie istnieje
 mssql.ensure_diagnostics_table()  # DiagLog: utwórz tabelę jeśli nie istnieje
+mssql.ensure_version_history_table()  # Version history: utwórz tabelę jeśli nie istnieje
+mssql.record_version(BOT_VERSION, f"Deploy {datetime.now().strftime('%Y-%m-%d')}")  # Aktualizuj wersję w DB
 mssql.purge_old_logs(days=14)     # Wyczyść logi starsze niż 2 tygodnie
 set_mssql_writer(mssql)  # Połącz tran_logs z bazą MS SQL
 # Przekieruj WARNING+ do tabeli bot_logs
