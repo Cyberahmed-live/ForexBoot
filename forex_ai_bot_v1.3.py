@@ -45,7 +45,7 @@ ATR_MIN                 = float(get_global_cfg("atr_min"))               # Minim
 TRAILING_UPDATE_SEC     = get_global_cfg("trade_timeout")                # Czas oczekiwania na aktualizację SL w sekundach 60
 PREDICT_PROBA_THRESHOLD = get_global_cfg("predict_proba_threshold")      # Próg prawdopodobieństwa dla decyzji handlowych
 TIMEZONE                = get_global_cfg("timezone")                     # Strefa czasowa
-VERSION                 = get_global_cfg("version") or BOT_VERSION       # Wersja bota (DB override lub BOT_VERSION)
+VERSION                 = BOT_VERSION                                    # Wersja bota (autorytatywna ze stalej BOT_VERSION)
 LOG_FILE                = get_global_cfg("log_file")                     # Plik logów
 MIN_HOLD_SECONDS        = float(get_global_cfg("tran_incubator_sec"))    # Minimalny czas trzymania pozycji w sekundach (5 świec H4)
 # --- 4-stopniowy trailing SL (dla zysków) ---
