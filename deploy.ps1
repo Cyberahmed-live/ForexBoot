@@ -1,5 +1,5 @@
-# ============================================================================
-# FOREX AI BOT — UNIFIED DEPLOYMENT SCRIPT
+﻿# ============================================================================
+# FOREX AI BOT - UNIFIED DEPLOYMENT SCRIPT
 # ============================================================================
 # Srodowisko produkcyjne:
 #   OS        : Windows Server 2025
@@ -66,13 +66,13 @@ $DEBUG_FILES = @(
 
 # ===========================================================================
 Write-Host "======================================================================" -ForegroundColor Cyan
-Write-Host "      FOREX AI BOT — DEPLOY NA PRODUKCJE" -ForegroundColor Cyan
+Write-Host "      FOREX AI BOT - DEPLOY NA PRODUKCJE" -ForegroundColor Cyan
 Write-Host "      $(Get-Date -Format 'yyyy-MM-dd HH:mm:ss')" -ForegroundColor Cyan
 Write-Host "======================================================================" -ForegroundColor Cyan
 Write-Host "  Zrodlo (DEV) : $DEV" -ForegroundColor Yellow
 Write-Host "  Cel (PROD)   : $PROD_UNC" -ForegroundColor Yellow
 Write-Host "  Baza danych  : $DB_HOST\$DB_NAME" -ForegroundColor Yellow
-if ($DryRun) { Write-Host "  [TRYB: DRY RUN — zadne pliki nie zostana zmienione]" -ForegroundColor Magenta }
+if ($DryRun) { Write-Host "  [TRYB: DRY RUN - zadne pliki nie zostana zmienione]" -ForegroundColor Magenta }
 Write-Host ""
 
 # --- Mapowanie dysku B: ---
@@ -113,10 +113,10 @@ if (Test-Path $botFile) {
             $verY++
             if ($verY -gt 99) { $verX++; $verY = 1 }
             $newVersion = "1.3.$verX.$verY"
-            Write-Host "  Wersja : $oldVersion  ->  $newVersion  [DRY RUN — brak zmiany]" -ForegroundColor Magenta
+            Write-Host "  Wersja : $oldVersion  ->  $newVersion  [DRY RUN - brak zmiany]" -ForegroundColor Magenta
         }
     } else {
-        Write-Host "  UWAGA: Nie znaleziono BOT_VERSION w pliku bota — pomijam increment." -ForegroundColor Yellow
+        Write-Host "  UWAGA: Nie znaleziono BOT_VERSION w pliku bota - pomijam increment." -ForegroundColor Yellow
     }
 }
 Write-Host ""
@@ -143,7 +143,7 @@ if ($SetupTasks) {
         -Description "Uruchamia MetaTrader 5 przy logowaniu uzytkownika btrender" -Force
     Write-Host "  OK: Task 'ForexBot - MetaTrader5' utworzony." -ForegroundColor Green
 
-    # Task 2: Forex AI Bot (30s opoznienie — czeka na MT5)
+    # Task 2: Forex AI Bot (30s opoznienie - czeka na MT5)
     $botAction  = New-ScheduledTaskAction `
         -Execute $PYTHON -Argument "forex_ai_bot_v1.3.py" `
         -WorkingDirectory "$PROD\"
@@ -264,7 +264,7 @@ Write-Host "====================================================================
 Write-Host "  Skopiowano : $ok  |  Bledy: $fail  |  Debug usunieto: $cleaned  |  Czas: ${duration}s"
 Write-Host "  Baza DB    : $DB_HOST\$DB_NAME  (Windows Auth)" -ForegroundColor DarkGray
 Write-Host ""
-Write-Host "  PO DEPLOYMENCIE — git workflow:" -ForegroundColor Yellow
+Write-Host "  PO DEPLOYMENCIE - git workflow:" -ForegroundColor Yellow
 Write-Host "    git add . ; git commit -m 'deploy prod $(Get-Date -Format yyyy-MM-dd)'" -ForegroundColor Yellow
 Write-Host "    git push origin dev" -ForegroundColor Yellow
 Write-Host "    git checkout main ; git merge dev ; git push origin main ; git checkout dev" -ForegroundColor Yellow
@@ -276,7 +276,7 @@ if ($fail -eq 0) {
     Write-Host "  [SUCCESS] DEPLOYMENT ZAKONCZONY POMYSLNIE" -ForegroundColor Green
     exit 0
 } else {
-    Write-Host "  [FAILED]  DEPLOYMENT Z BLEDAMI — sprawdz powyzej" -ForegroundColor Red
+    Write-Host "  [FAILED]  DEPLOYMENT Z BLEDAMI - sprawdz powyzej" -ForegroundColor Red
     exit 1
 }
 

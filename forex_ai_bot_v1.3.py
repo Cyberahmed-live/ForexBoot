@@ -1,4 +1,4 @@
-# -*- coding: utf-8 -*-
+﻿# -*- coding: utf-8 -*-
 # forex_ai_bot_full.py
 import os
 import sys
@@ -22,7 +22,7 @@ import forex_base.common as common         # Importuj moduł common
 from forex_v14.wisdom_aggregator          import WisdomAggregator            # v1.4 — obserwacja rynku
 from forex_v14.db_writer                  import MSSQLWriter, DBLogHandler       # v1.4 — zapis do MS SQL
 # === WERSJA ===
-BOT_VERSION             = "1.3.0.1"                                      # Wersja bota (auto-increment przy deploy)
+BOT_VERSION             = "1.3.0.2"                                      # Wersja bota (auto-increment przy deploy)                                      # Wersja bota (auto-increment przy deploy)
 
 # === KONFIGURACJA ===
 SYMBOLS                 = get_global_cfg("symbols")                      # Pobierz listę symboli z konfiguracji
