@@ -196,10 +196,13 @@ logging.basicConfig(
     encoding='utf-8'
 )
 
-print("================== Konfiguracja globalna ==================")
-print("")
-print(get_global_cfg_as_dict()) # Loguj całą konfigurację globalną
-print("===========================================================")
+logging.info(
+    f"Bot v{get_global_cfg('version')} | "
+    f"symbols={len(get_global_cfg('symbols') or [])} | "
+    f"interval={get_global_cfg('interval_minutes')}min | "
+    f"conf_min={get_global_cfg('conf_threshold_min') or CONF_THRESHOLD_MIN:.2f} | "
+    f"daily_loss_limit={get_global_cfg('daily_loss_usd_limit') or DAILY_LOSS_USD_LIMIT:.0f} USD"
+)
 
 # === FUNKCJE ===
 def initialize_mt5():
