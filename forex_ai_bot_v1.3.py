@@ -113,7 +113,11 @@ def reload_cfg():
             _original_count = len(SYMBOLS)
             SYMBOLS = [s for s in SYMBOLS if s not in BLACKLIST_SYMBOLS]
             if len(SYMBOLS) < _original_count:
-                logging.warning(f"⛔ Blacklist aktywna: usunięto {_original_count - len(SYMBOLS)} symboli")
+                _removed = _original_count - len(SYMBOLS)
+                global _blacklist_warned_count
+                if _removed != _blacklist_warned_count:
+                    logging.warning(f"⛔ Blacklist aktywna: usunięto {_removed} symboli")
+                    _blacklist_warned_count = _removed
         else:
             BLACKLIST_SYMBOLS = []
         LOT                  = _f('lot',                    LOT)
@@ -1439,6 +1443,7 @@ try:
     tran_log_last_update = None
     _daily_limit_warned = False   # flaga: czy już zalogowano limit strat (reset co restart)
     _usd_limit_warned = False      # flaga: czy już zalogowano USD circuit breaker
+    _blacklist_warned_count = -1   # throttle: loguj blacklist tylko gdy zmieni się liczba symboli
     _off_hours_last_log: datetime = None  # throttle: log "poza godzinami" max 1x/h
 
     while True:
