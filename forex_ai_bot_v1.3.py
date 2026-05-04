@@ -1439,6 +1439,7 @@ try:
     tran_log_last_update = None
     _daily_limit_warned = False   # flaga: czy już zalogowano limit strat (reset co restart)
     _usd_limit_warned = False      # flaga: czy już zalogowano USD circuit breaker
+    _off_hours_last_log: datetime = None  # throttle: log "poza godzinami" max 1x/h
 
     while True:
         reload_cfg()  # Odswież konfigurację z DB na początku każdej iteracji
@@ -1491,8 +1492,17 @@ try:
 
         # Poza godzinami handlu
         if not is_trading_time():
-            logging.info("🌙 Poza godzinami handlu, czekam 5 minut...")
-            print("🌙 Poza godzinami handlu — pauza 5 minut...")
+            _now_oh = datetime.now()
+            # Log max 1x/h żeby nie spamować przez weekend
+            if _off_hours_last_log is None or (_now_oh - _off_hours_last_log).total_seconds() >= 3600:
+                _is_weekend = _now_oh.weekday() >= 5  # sob=5, niedz=6
+                _resume_info = "Wznowienie w poniedziałek ~01:00" if _is_weekend else "Wznowienie po godzinach handlu"
+                logging.info(f"🌙 Poza godzinami handlu. {_resume_info}.")
+                _off_hours_last_log = _now_oh
+            # Sprawdź 23:59 TUTAJ też — żeby bot restartował się nawet w weekend
+            if _now_oh.hour == 23 and _now_oh.minute >= 58:
+                logging.info("🕛 Jest 23:58/59 — restartuję bota (koniec doby).")
+                sys.exit()
             # Wymuszone retreny z flagi DB — dzialaj rowniez poza godzinami handlu
             try:
                 _forced = mssql.pop_retrain_symbols()
@@ -1517,7 +1527,9 @@ try:
                 )
             except Exception as e:
                 logging.error(f"❌ Heartbeat error (paused): {e}")
-            time.sleep(300)
+            # W weekend śpij 30 min zamiast 5 min — rynek zamknięty, nie ma pośpiechu
+            _sleep_sec = 1800 if datetime.now().weekday() >= 5 else 300
+            time.sleep(_sleep_sec)
             continue
         # Uruchom ponowne trenowanie modeli
         retrain_models()
