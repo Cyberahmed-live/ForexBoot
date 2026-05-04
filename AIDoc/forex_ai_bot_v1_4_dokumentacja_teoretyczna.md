@@ -3,6 +3,71 @@
 
 ---
 
+## 0. Aktualne założenia v1.3 (produkcja) — zmiany 2026-05-04
+
+> Ta sekcja opisuje **biznesowe założenia zmian** wdrożonych do działającego bota v1.3.0.5.
+> Sekcje 1–14 dotyczą wizji docelowej v1.4 (w projektowaniu).
+
+### 0.1 HTF Scoring — dlaczego punkty zamiast binarnego bloku?
+
+**Problem przed zmianą**: Bot blokował transakcje gdy W1 i D1 były niezgodne — ale nie rozróżniał "lekko niezgodne" od "silnie niezgodne". Np. W1=UP (silny), D1=FLAT (neutralny) → blokada, mimo że W1 dawał mocny sygnał. To powodowało zbyt dużo blokad.
+
+**Nowe podejście — system punktów pewności kierunku:**
+
+| Timeframe | Zgodny z ML | Przeciwny do ML |
+|-----------|-------------|-----------------|
+| W1 (tygodniowy) | +2 pkt | −2 pkt |
+| D1 (dzienny) | +1 pkt | −1 pkt |
+| H4 (4-godzinny) | +1 pkt | −1 pkt |
+
+**Zasada biznesowa:**
+- Score 0–1 → **BLOKADA** — zbyt słaba zgodność HTF, ryzyko wejścia pod prąd
+- Score 2 → **SŁABE WEJŚCIE** — wchodzimy tylko z minimalnym lotem i wyższym progiem ufności (+5%). Bot "wchodzi ostrożnie" gdy sygnał jest umiarkowany.
+- Score 3–4 → **PEŁNE WEJŚCIE** — wszystkie timeframy zgodne, normalny lot i próg
+
+**Efekt**: Mniej blokad przy silnych sygnałach W1. Ostrożne wejścia przy sygnałach mieszanych. Całkowita blokada tylko gdy brak zgodności.
+
+### 0.2 Adaptive conf/lot per symbol — nauka z własnej historii
+
+**Problem przed zmianą**: Bot traktował wszystkie pary walutowe jednakowo. XAGUSD (srebro) i EURUSD miały ten sam próg ufności, mimo że historycznie srebro dawało dużo gorzsze wyniki.
+
+**Nowe podejście — automatyczna adaptacja na podstawie win-rate:**
+
+Bot co godzinę sprawdza historię transakcji z bazy danych. Dla symboli z ≥ 10 zamkniętych transakcji:
+
+| Win-rate | Reakcja bota |
+|----------|-------------|
+| ≥ 35% | Bez zmian — normalny próg i lot |
+| < 35% | Próg ufności +10%, lot ×0.5 — wchodzi rzadziej i mniejszym wolumenem |
+
+**Zasada biznesowa**: Bot uczy się na własnych błędach. Symbol który historycznie przegrywa → dostaje "karę" w postaci wyższej poprzeczki wejścia. Gdy jego wyniki się poprawią (win-rate wzrośnie), kara znika automatycznie przy kolejnym odświeżeniu.
+
+**Wartości domyślne** (konfigurowalne w `bot_config` DB):
+- `adaptive_min_trades = 10` — minimalna liczba transakcji do oceny
+- `adaptive_winrate_thresh = 0.35` — próg 35% win-rate
+- `adaptive_conf_boost = 0.10` — podniesienie progu ufności dla słabych symboli
+- `adaptive_lot_factor = 0.50` — redukcja lota dla słabych symboli
+
+### 0.3 Śledzenie wersji bota w transakcjach
+
+Każda nowa transakcja zapisuje pole `bot_version` (np. `"1.3.0.5"`) w tabeli `trades`. Pozwala to analizować czy zmiany w poszczególnych wersjach bota poprawiają win-rate.
+
+Komentarz wysyłany do MT5 zmieniony z `"AI Forex Bot 1.3"` na `"AI FBoot 1.3.0.5"` — widoczny w historii transakcji u brokera.
+
+### 0.4 Jakość operacyjna — ograniczenie szumu w logach
+
+Przed wdrożeniem bot generował setki identycznych komunikatów dziennie:
+- Weekend: `"Poza godzinami handlu"` co 5 minut = **~576 linii/weekend**
+- Dzienny limit strat: WARNING co 5 minut przez resztę dnia
+
+Po wdrożeniu:
+- Komunikat off-hours: **max 1 raz na godzinę** (throttle `_off_hours_last_log`)
+- W weekend sleep wydłużony do **30 minut** (rynek zamknięty)
+- Komunikaty o limitach strat: **raz na dobę** (flagi `_daily_limit_warned`, `_usd_limit_warned`)
+- Restart 23:59 działa teraz również w **weekend** (wcześniej był omijany)
+
+---
+
 ## 1. Wizja i filozofia wersji 1.4
 
 ### 1.1 Zmiana paradygmatu
