@@ -585,7 +585,7 @@ def place_order(symbol, action, atr, pred_proba, use_min_lot=False, lot_factor=1
         "tp": tp,
         "deviation": 10,
         "magic": MAGIC,
-        "comment": f"AI Forex Bot {VERSION}",
+        "comment": f"AI FBoot {VERSION}",
         "type_time": mt5.ORDER_TIME_GTC,
         "type_filling": mt5.ORDER_FILLING_FOK,
     }
@@ -617,7 +617,8 @@ def place_order(symbol, action, atr, pred_proba, use_min_lot=False, lot_factor=1
             ud='S',
             done='Nie',
             atr=atr,
-            profit=0.00
+            profit=0.00,
+            bot_version=VERSION
         )
         return
 

@@ -12,7 +12,7 @@ def set_mssql_writer(writer):
     _mssql_writer = writer
 
 
-def log_trade(symbol, direction, price, sl, tp, volume, prediction, retcode, result, confidence, ud, done, atr, profit):
+def log_trade(symbol, direction, price, sl, tp, volume, prediction, retcode, result, confidence, ud, done, atr, profit, bot_version=""):
     if _mssql_writer is None:
         logging.error("[tran_logs] MSSQLWriter nie ustawiony — transakcja nie zapisana!")
         return
@@ -25,7 +25,8 @@ def log_trade(symbol, direction, price, sl, tp, volume, prediction, retcode, res
             prediction=str(prediction), status=str(retcode),
             order_id=result if isinstance(result, int) else 0,
             confidence=confidence, atr=atr,
-            result=ud, profit=profit, done=done
+            result=ud, profit=profit, done=done,
+            bot_version=bot_version
         )
     except Exception as e:
         logging.error(f"[MSSQL] Błąd zapisu transakcji: {e}")
