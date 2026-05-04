@@ -60,6 +60,7 @@ VOL_BLOCK_END           = int(get_global_cfg("volatility_block_end"))     # Bloc
 SYMBOL_COOLDOWN_H       = float(get_global_cfg("symbol_cooldown_hours"))  # Cooldown after loss (hours)
 MAX_DAILY_LOSSES        = int(get_global_cfg("max_daily_losses"))         # Max losses per day
 MAX_OPEN_POSITIONS      = int(get_global_cfg("max_open_positions"))       # Max simultaneous open positions
+DAILY_LOSS_USD_LIMIT    = float(get_global_cfg("daily_loss_usd_limit") or 1000)  # Max USD daily loss → stop trading
 # --- Variant C: ochrona pozycji ---
 PARTIAL_CLOSE_R         = float(get_global_cfg("partial_close_r"))        # Partial close at R>=1.5
 PARTIAL_CLOSE_PCT       = float(get_global_cfg("partial_close_pct"))      # % to close (0.5 = 50%)
@@ -82,7 +83,7 @@ def reload_cfg():
     Aktualizuje wszystkie globalne stale. Fallback: wartosc pozostaje bez zmian."""
     global SYMBOLS, BLACKLIST_SYMBOLS, LOT, LOT_MIN, LOT_MIN_SYMBOL, CONF_THRESHOLD_SYMBOL, CONF_THRESHOLD_MIN, CONF_THRESHOLD_NORMAL, TP_ATR_MULTIPLIER, SL_ATR_MULTIPLIER, ATR_MIN
     global PREDICT_PROBA_THRESHOLD, MIN_HOLD_SECONDS, MIN_RR_RATIO, SPREAD_FILTER_PCT
-    global VOL_BLOCK_START, VOL_BLOCK_END, SYMBOL_COOLDOWN_H, MAX_DAILY_LOSSES, MAX_OPEN_POSITIONS
+    global VOL_BLOCK_START, VOL_BLOCK_END, SYMBOL_COOLDOWN_H, MAX_DAILY_LOSSES, MAX_OPEN_POSITIONS, DAILY_LOSS_USD_LIMIT
     global PARTIAL_CLOSE_R, PARTIAL_CLOSE_PCT, TIME_EXIT_HOURS
     global TRAIL_BE_R, TRAIL_LOCK_R, TRAIL_LOCK_FRAC, TRAIL_ATR_R, TRAIL_ATR_FACTOR
     global TRAIL_TIGHT_R, TRAIL_TIGHT_FACTOR, TRAILING_UPDATE_SEC
@@ -130,6 +131,7 @@ def reload_cfg():
         SYMBOL_COOLDOWN_H    = _f('symbol_cooldown_hours',  SYMBOL_COOLDOWN_H)
         MAX_DAILY_LOSSES     = _i('max_daily_losses',       MAX_DAILY_LOSSES)
         MAX_OPEN_POSITIONS   = _i('max_open_positions',     MAX_OPEN_POSITIONS)
+        DAILY_LOSS_USD_LIMIT = _f('daily_loss_usd_limit',   DAILY_LOSS_USD_LIMIT)
         PARTIAL_CLOSE_R      = _f('partial_close_r',        PARTIAL_CLOSE_R)
         PARTIAL_CLOSE_PCT    = _f('partial_close_pct',      PARTIAL_CLOSE_PCT)
         TIME_EXIT_HOURS      = _f('time_exit_hours',        TIME_EXIT_HOURS)
@@ -1496,7 +1498,7 @@ try:
         except Exception as _loss_e:
             logging.error(f"❌ Loss tracker error: {_loss_e}")
 
-        # --- Variant C: Blokada po przekroczeniu dziennego limitu strat ---
+        # --- Variant C: Blokada po przekroczeniu dziennego limitu strat (liczba) ---
         if daily_loss_count >= MAX_DAILY_LOSSES:
             logging.warning(
                 f"⛔ Dzienny limit strat osiągnięty ({daily_loss_count}/{MAX_DAILY_LOSSES}). "
@@ -1506,6 +1508,20 @@ try:
             update_trailing_sl()
             time.sleep(TRAILING_UPDATE_SEC)
             continue
+
+        # --- Circuit breaker USD: dzienny limit straty w dolarach ---
+        try:
+            _today_usd = mssql.get_today_loss_usd()
+            if _today_usd <= -DAILY_LOSS_USD_LIMIT:
+                logging.warning(
+                    f"⛔ Dzienny limit straty USD osiągnięty ({_today_usd:.2f} USD, "
+                    f"limit: -{DAILY_LOSS_USD_LIMIT:.0f} USD). Stop handlu do końca dnia."
+                )
+                update_trailing_sl()
+                time.sleep(TRAILING_UPDATE_SEC)
+                continue
+        except Exception as _usd_e:
+            logging.error(f"❌ USD loss breaker error: {_usd_e}")
 
         # --- Variant C: Blokada w oknie niskiej płynności (00:00-04:00 UTC) ---
         _utc_hour = datetime.utcnow().hour
@@ -1638,6 +1654,10 @@ try:
                         # W1 wyraźnie PRZECIWNY do ML → blokada
                         htf_blocked = True
                         htf_block_reason = f"W1={w1} sprzeczny z ML={ml_direction}"
+                    elif w1_dir is not None and d1_dir is not None and d1_dir != w1_dir:
+                        # W1 zgodny z ML, ale D1 sprzeczny z W1 — konflikt HTF → blokada
+                        htf_blocked = True
+                        htf_block_reason = f"W1={w1} vs D1={d1} — konflikt HTF (ML={ml_direction})"
                     elif w1_dir is None and d1_dir is not None and d1_dir != ml_direction:
                         # W1 FLAT, D1 PRZECIWNY → blokada
                         htf_blocked = True
