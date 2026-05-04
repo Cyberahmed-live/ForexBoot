@@ -82,7 +82,7 @@ global_cfg = {
     "log_level": "INFO",                            # Poziom logowania dla aplikacji
     "logs_dir": "forex_logs",                       # Katalog na pliki logów
     "log_file": f"forex_logs/forex_bot_{datetime.now().strftime('%Y-%m-%d')}.log",  # Ścieżka do pliku logów
-    "version": "1.3.0",                             # Wersja AI Bota
+    "version": "1.3.0.5",                           # Wersja AI Bota
 }
 
 def _load_cfg_from_db(defaults):
