@@ -1,4 +1,3 @@
-﻿# -*- coding: utf-8 -*-
 # forex_ai_bot_full.py
 import os
 import sys
@@ -21,12 +20,9 @@ from forex_base.train_forex_ai_model_v1_2 import run as retrain_models      # Pr
 import forex_base.common as common         # Importuj moduł common
 from forex_v14.wisdom_aggregator          import WisdomAggregator            # v1.4 — obserwacja rynku
 from forex_v14.db_writer                  import MSSQLWriter, DBLogHandler       # v1.4 — zapis do MS SQL
-# === WERSJA ===
-BOT_VERSION             = "1.3.0.4"                                      # Wersja bota (auto-increment przy deploy)                                      # Wersja bota (auto-increment przy deploy)                                      # Wersja bota (auto-increment przy deploy)                                      # Wersja bota (auto-increment przy deploy)
-
 # === KONFIGURACJA ===
 SYMBOLS                 = get_global_cfg("symbols")                      # Pobierz listę symboli z konfiguracji
-BLACKLIST_SYMBOLS       = get_global_cfg("blacklist_symbols") or ""      # Symbole do wyłączenia (np. GBPCHF)
+BLACKLIST_SYMBOLS       = get_global_cfg("blacklist_symbols", "")        # Symbole do wyłączenia (np. GBPCHF)
 INTERVAL_MINUTES        = get_global_cfg("interval_minutes")             # Pobierz interwał w minutach
 TIMEFRAME               = get_global_cfg("timeframe")                    # Pobierz odpowiedni timeframe
 CANDLES                 = get_global_cfg("candles")                      # Liczba świec do analizy
@@ -45,10 +41,10 @@ ATR_MIN                 = float(get_global_cfg("atr_min"))               # Minim
 TRAILING_UPDATE_SEC     = get_global_cfg("trade_timeout")                # Czas oczekiwania na aktualizację SL w sekundach 60
 PREDICT_PROBA_THRESHOLD = get_global_cfg("predict_proba_threshold")      # Próg prawdopodobieństwa dla decyzji handlowych
 TIMEZONE                = get_global_cfg("timezone")                     # Strefa czasowa
-VERSION                 = BOT_VERSION                                    # Wersja bota (autorytatywna ze stalej BOT_VERSION)
+VERSION                 = get_global_cfg("version")                      # Wersja bota
 LOG_FILE                = get_global_cfg("log_file")                     # Plik logów
 MIN_HOLD_SECONDS        = float(get_global_cfg("tran_incubator_sec"))    # Minimalny czas trzymania pozycji w sekundach (5 świec H4)
-# --- 4-stopniowy trailing SL (dla zysków) ---
+# --- 4-stopniowy trailing SL ---
 TRAIL_BE_R              = float(get_global_cfg("trail_breakeven_r"))      # Stage 1: break-even
 TRAIL_LOCK_R            = float(get_global_cfg("trail_lock_r"))           # Stage 2: lock profit
 TRAIL_LOCK_FRAC         = float(get_global_cfg("trail_lock_fraction"))    # Stage 2: gwarantowana frakcja R
@@ -56,10 +52,6 @@ TRAIL_ATR_R             = float(get_global_cfg("trail_atr_r"))            # Stag
 TRAIL_ATR_FACTOR        = float(get_global_cfg("trail_atr_factor"))       # Stage 3: ATR factor
 TRAIL_TIGHT_R           = float(get_global_cfg("trail_tight_r"))          # Stage 4: tight trail
 TRAIL_TIGHT_FACTOR      = float(get_global_cfg("trail_tight_factor"))     # Stage 4: ATR factor
-# --- Dynamic Negative Trailing Stop (dla strat) ---
-TRAIL_NEG_ACTIVE_R      = float(get_global_cfg("trail_neg_active_r") or "-0.5")     # Aktivuj negative trail na R <= -0.5
-TRAIL_NEG_MAX_LOSS_R    = float(get_global_cfg("trail_neg_max_loss_r") or "-2.0")   # Hard cap: nie pozwól gorzej niż -2.0R
-TRAIL_NEG_FACTOR        = float(get_global_cfg("trail_neg_factor") or "0.5")         # 0.5 ATR od najgorszej ceny
 # --- Variant C: filtry wejścia ---
 MIN_RR_RATIO            = float(get_global_cfg("min_rr_ratio"))           # Min R:R (TP/SL >= 2.0)
 SPREAD_FILTER_PCT       = float(get_global_cfg("spread_filter_pct"))      # Spread > 20% SL → block
@@ -69,6 +61,11 @@ SYMBOL_COOLDOWN_H       = float(get_global_cfg("symbol_cooldown_hours"))  # Cool
 MAX_DAILY_LOSSES        = int(get_global_cfg("max_daily_losses"))         # Max losses per day
 MAX_OPEN_POSITIONS      = int(get_global_cfg("max_open_positions"))       # Max simultaneous open positions
 DAILY_LOSS_USD_LIMIT    = float(get_global_cfg("daily_loss_usd_limit") or 1000)  # Max USD daily loss → stop trading
+HTF_PARTIAL_CONF_BOOST  = float(get_global_cfg("htf_partial_conf_boost") or 0.05)  # +conf wymagany dla score=2/4
+ADAPTIVE_MIN_TRADES     = int(get_global_cfg("adaptive_min_trades") or 10)        # Min trade/symbol do adaptive
+ADAPTIVE_WINRATE_THRESH = float(get_global_cfg("adaptive_winrate_thresh") or 0.35) # WR < 35% → boost conf/reduce lot
+ADAPTIVE_CONF_BOOST     = float(get_global_cfg("adaptive_conf_boost") or 0.10)    # +conf dla słabych symboli
+ADAPTIVE_LOT_FACTOR     = float(get_global_cfg("adaptive_lot_factor") or 0.5)     # lot * 0.5 dla słabych symboli
 # --- Variant C: ochrona pozycji ---
 PARTIAL_CLOSE_R         = float(get_global_cfg("partial_close_r"))        # Partial close at R>=1.5
 PARTIAL_CLOSE_PCT       = float(get_global_cfg("partial_close_pct"))      # % to close (0.5 = 50%)
@@ -92,10 +89,10 @@ def reload_cfg():
     global SYMBOLS, BLACKLIST_SYMBOLS, LOT, LOT_MIN, LOT_MIN_SYMBOL, CONF_THRESHOLD_SYMBOL, CONF_THRESHOLD_MIN, CONF_THRESHOLD_NORMAL, TP_ATR_MULTIPLIER, SL_ATR_MULTIPLIER, ATR_MIN
     global PREDICT_PROBA_THRESHOLD, MIN_HOLD_SECONDS, MIN_RR_RATIO, SPREAD_FILTER_PCT
     global VOL_BLOCK_START, VOL_BLOCK_END, SYMBOL_COOLDOWN_H, MAX_DAILY_LOSSES, MAX_OPEN_POSITIONS, DAILY_LOSS_USD_LIMIT
+    global HTF_PARTIAL_CONF_BOOST, ADAPTIVE_MIN_TRADES, ADAPTIVE_WINRATE_THRESH, ADAPTIVE_CONF_BOOST, ADAPTIVE_LOT_FACTOR
     global PARTIAL_CLOSE_R, PARTIAL_CLOSE_PCT, TIME_EXIT_HOURS
     global TRAIL_BE_R, TRAIL_LOCK_R, TRAIL_LOCK_FRAC, TRAIL_ATR_R, TRAIL_ATR_FACTOR
-    global TRAIL_TIGHT_R, TRAIL_TIGHT_FACTOR, TRAIL_NEG_ACTIVE_R, TRAIL_NEG_MAX_LOSS_R, TRAIL_NEG_FACTOR
-    global TRAILING_UPDATE_SEC
+    global TRAIL_TIGHT_R, TRAIL_TIGHT_FACTOR, TRAILING_UPDATE_SEC
     global NPM_ALERT_R, NPM_CRITICAL_R, NPM_HARD_CAP_R, NPM_ALERT_NPM, NPM_CRITICAL_NPM
     global NPM_SCALED_50_R, NPM_SCALED_100_R, NPM_TIGHTEN_SL_FACTOR
     global NPM_WEEKEND_BLOCK_HOUR, NPM_WEEKEND_RECOVERY, CANDLES, CANDLES_MAX
@@ -141,6 +138,11 @@ def reload_cfg():
         MAX_DAILY_LOSSES     = _i('max_daily_losses',       MAX_DAILY_LOSSES)
         MAX_OPEN_POSITIONS   = _i('max_open_positions',     MAX_OPEN_POSITIONS)
         DAILY_LOSS_USD_LIMIT = _f('daily_loss_usd_limit',   DAILY_LOSS_USD_LIMIT)
+        HTF_PARTIAL_CONF_BOOST  = _f('htf_partial_conf_boost',   HTF_PARTIAL_CONF_BOOST)
+        ADAPTIVE_MIN_TRADES     = _i('adaptive_min_trades',      ADAPTIVE_MIN_TRADES)
+        ADAPTIVE_WINRATE_THRESH = _f('adaptive_winrate_thresh',  ADAPTIVE_WINRATE_THRESH)
+        ADAPTIVE_CONF_BOOST     = _f('adaptive_conf_boost',      ADAPTIVE_CONF_BOOST)
+        ADAPTIVE_LOT_FACTOR     = _f('adaptive_lot_factor',      ADAPTIVE_LOT_FACTOR)
         PARTIAL_CLOSE_R      = _f('partial_close_r',        PARTIAL_CLOSE_R)
         PARTIAL_CLOSE_PCT    = _f('partial_close_pct',      PARTIAL_CLOSE_PCT)
         TIME_EXIT_HOURS      = _f('time_exit_hours',        TIME_EXIT_HOURS)
@@ -151,9 +153,6 @@ def reload_cfg():
         TRAIL_ATR_FACTOR     = _f('trail_atr_factor',       TRAIL_ATR_FACTOR)
         TRAIL_TIGHT_R        = _f('trail_tight_r',          TRAIL_TIGHT_R)
         TRAIL_TIGHT_FACTOR   = _f('trail_tight_factor',     TRAIL_TIGHT_FACTOR)
-        TRAIL_NEG_ACTIVE_R   = _f('trail_neg_active_r',     TRAIL_NEG_ACTIVE_R)
-        TRAIL_NEG_MAX_LOSS_R = _f('trail_neg_max_loss_r',   TRAIL_NEG_MAX_LOSS_R)
-        TRAIL_NEG_FACTOR     = _f('trail_neg_factor',       TRAIL_NEG_FACTOR)
         NPM_ALERT_R          = _f('npm_alert_r',            NPM_ALERT_R)
         NPM_CRITICAL_R       = _f('npm_critical_r',         NPM_CRITICAL_R)
         NPM_HARD_CAP_R       = _f('npm_hard_cap_r',         NPM_HARD_CAP_R)
@@ -181,64 +180,26 @@ daily_loss_count = 0       # Licznik strat w bieżącym dniu
 daily_loss_date = None     # Data ostatniego resetu licznika
 partial_closed_tickets = set()  # Pozycje już częściowo zamknięte
 npm_scaled_exit_tickets = set()  # Pozycje z NPM skalowanym zamknięciem 50%
+# === Variant A: Adaptive conf/lot per symbol ===
+# {symbol: {'conf_boost': float, 'lot_factor': float, 'winrate': float, 'n': int}}
+symbol_adaptive = {}       # ładowane przy starcie i reload_cfg co ~5 min
+symbol_adaptive_last_load = None  # datetime ostatniego wczytania
+# === LOGOWANIE ===
+# Utwórz katalog na logi, jeśli nie istnieje
+os.makedirs(get_global_cfg("logs_dir"), exist_ok=True)
 
-# === LOGOWANIE - DYNAMIC LOG FILE HANDLER ===
-_last_log_date = None
-_log_file_handler = None
+# Konfiguracja logowania
+logging.basicConfig(
+    filename=LOG_FILE,  # Pobierz ścieżkę do pliku loga
+    level=logging.INFO,
+    format='%(asctime)s [%(levelname)s] %(message)s',
+    encoding='utf-8'
+)
 
-def setup_logging():
-    """Setup file logging with daily rotation support."""
-    global LOG_FILE, _last_log_date, _log_file_handler
-    
-    # Regenerate LOG_FILE path based on current date
-    LOG_FILE = f"{get_global_cfg('logs_dir')}/forex_bot_{datetime.now().strftime('%Y-%m-%d')}.log"
-    os.makedirs(get_global_cfg("logs_dir"), exist_ok=True)
-    
-    # Remove old file handler if exists
-    if _log_file_handler:
-        logging.getLogger().removeHandler(_log_file_handler)
-        _log_file_handler.close()
-    
-    # Create new file handler
-    _log_file_handler = logging.FileHandler(LOG_FILE, mode='a', encoding='utf-8')
-    _log_file_handler.setLevel(logging.INFO)
-    formatter = logging.Formatter('%(asctime)s [%(levelname)s] %(message)s')
-    _log_file_handler.setFormatter(formatter)
-    
-    # Add to root logger
-    root_logger = logging.getLogger()
-    root_logger.setLevel(logging.INFO)
-
-    # Usun istniejace StreamHandlery (stdout/stderr) dodane przez basicConfig lub importy
-    for h in root_logger.handlers[:]:
-        if isinstance(h, logging.StreamHandler) and not isinstance(h, logging.FileHandler):
-            root_logger.removeHandler(h)
-
-    root_logger.addHandler(_log_file_handler)
-
-    # Stdout/stderr: tylko CRITICAL (bledy krytyczne wymagajace natychmiastowej uwagi)
-    _console_handler = logging.StreamHandler()
-    _console_handler.setLevel(logging.CRITICAL)
-    _console_handler.setFormatter(logging.Formatter('%(asctime)s [%(levelname)s] %(message)s'))
-    root_logger.addHandler(_console_handler)
-    
-    _last_log_date = datetime.now().date()
-    logging.info(f"Logowanie do pliku: {LOG_FILE}")
-
-def check_and_rotate_logs():
-    """Sprawdzenie czy zmienił się dzień - jeśli tak, otwórz nowy plik loga."""
-    global _last_log_date
-    today = datetime.now().date()
-    if _last_log_date != today:
-        setup_logging()
-
-# Initial logging setup
-setup_logging()
-
-logging.info("================== Konfiguracja globalna ==================")
-logging.info(str(get_global_cfg_as_dict()))
-logging.info("===========================================================")
-
+print("================== Konfiguracja globalna ==================")
+print("")
+print(get_global_cfg_as_dict()) # Loguj całą konfigurację globalną
+print("===========================================================")
 
 # === FUNKCJE ===
 def initialize_mt5():
@@ -457,7 +418,7 @@ def calculate_fibo_tp(df, action, fibo_level=TP_ATR_MULTIPLIER, window=CANDLES):
         tp = low + (high - low) * (1 - fibo_level)
     return tp
 
-def place_order(symbol, action, atr, pred_proba, use_min_lot=False):
+def place_order(symbol, action, atr, pred_proba, use_min_lot=False, lot_factor=1.0):
     if not mt5.symbol_select(symbol, True):
         logging.warning(f"⚠️ Nie udało się aktywować symbolu {symbol}")
         return
@@ -520,8 +481,8 @@ def place_order(symbol, action, atr, pred_proba, use_min_lot=False):
                                     filter_blocked=True,
                                     filter_reason=f"ATR={atr:.5f} < ATR_MIN={ATR_MIN}",
                                     atr=atr, action_taken="SKIP")
-        except Exception as e:
-            logging.warning(f"[diagnostic] Błąd zapisu FILTER_ATR: {e}")
+        except Exception:
+            pass
         return
     
     # --- Variant C: Filtr R:R (min TP/SL ratio) ---
@@ -540,8 +501,8 @@ def place_order(symbol, action, atr, pred_proba, use_min_lot=False):
                                         filter_blocked=True,
                                         filter_reason=f"RR={rr_ratio:.2f} < {MIN_RR_RATIO}",
                                         atr=atr, rr_ratio=rr_ratio, action_taken="SKIP")
-            except Exception as e:
-                logging.warning(f"[diagnostic] Błąd zapisu FILTER_RR: {e}")
+            except Exception:
+                pass
             return
 
     # --- Variant C: Filtr spreadu (spread > 20% SL → block) ---
@@ -580,6 +541,13 @@ def place_order(symbol, action, atr, pred_proba, use_min_lot=False):
 
     sl_distance = abs(price - sl)
     lot = calculate_lot_size(symbol, sl_distance, risk_percent=2.0, confidence=pred_proba, use_min_lot=use_min_lot)
+    # Variant A: adaptive lot factor dla słabych symboli
+    if lot_factor != 1.0:
+        _info = mt5.symbol_info(symbol)
+        _vmin = _info.volume_min if _info else 0.01
+        _vstep = _info.volume_step if _info else 0.01
+        lot = max(_vmin, round(lot * lot_factor / _vstep) * _vstep)
+        logging.info(f"[Adaptive] {symbol} lot_factor={lot_factor} → final lot={lot:.2f}")
 
     # WALIDACJA I LOGOWANIE
     logging.info(
@@ -623,7 +591,7 @@ def place_order(symbol, action, atr, pred_proba, use_min_lot=False):
 
     if result is None:
         logging.error(f"❌ order_send() zwrócił None dla {symbol}. Sprawdź połączenie z MT5. {request}")
-        print(f"[ERROR] order_send() zwrócił None dla {symbol}. Sprawdź połączenie z MT5. {request}")
+        print(f"❌ order_send() zwrócił None dla {symbol}. Sprawdź połączenie z MT5. {request}")
         reconnect_mt5()
         return
     
@@ -656,7 +624,7 @@ def place_order(symbol, action, atr, pred_proba, use_min_lot=False):
         # attempt += 1
     else:
         logging.error(f"❌ Błąd zlecenia {symbol}: {result.retcode} — {result.comment}")
-        print(f"[ERROR] Błąd zlecenia {symbol}: {result.retcode} - {result.comment}")
+        print(f"❌ Błąd zlecenia {symbol}: {result.retcode} — {result.comment}")
 
     logging.error(f"❌ Nie udało się zrealizować zlecenia dla {symbol}.")
 
@@ -1159,68 +1127,8 @@ def update_trailing_sl():
                     _rc = _partial_result.retcode if _partial_result else "None"
                     logging.warning(f"⚠️ Partial close fail #{ticket} ({symbol}): {_rc}")
 
-        # --- Stage 0 / Negative Trailing: R < TRAIL_BE_R
+        # --- Stage 0: R < 1.0 — oryginalny SL, nic nie robimy ---
         if r_multiple < TRAIL_BE_R:
-            # === NEGATIVE TRAILING: Dynamiczny trailing stop dla strat ===
-            # Gdy R pada poniżej TRAIL_NEG_ACTIVE_R (np. -0.5), aktywuj dynamic loss trailing
-            # Śledź najgorszą cenę i ograniczaj nią do max TRAIL_NEG_MAX_LOSS_R (np. -2.0R)
-            
-            if r_multiple <= TRAIL_NEG_ACTIVE_R and r_multiple > TRAIL_NEG_MAX_LOSS_R:
-                data = get_data(symbol)
-                if data is not None:
-                    atr = calculate_atr(data)
-                    
-                    # Nowy SL: najgorsza cena + buffer (TRAIL_NEG_FACTOR * ATR)
-                    if is_buy:
-                        neg_sl = extreme + atr * TRAIL_NEG_FACTOR  # dla SELL (short), extreme to min cena
-                    else:
-                        neg_sl = extreme - atr * TRAIL_NEG_FACTOR  # dla BUY (long), extreme to max cena
-                    
-                    neg_sl = round(neg_sl, digits)
-                    current_sl = pos.sl
-                    
-                    # Sprawdzenie czy SL poprawia się (zbliża do entry, tzn. zmniejsza stratę)
-                    sl_improves_loss = (
-                        (is_buy and (current_sl is None or current_sl == 0 or neg_sl > current_sl)) or
-                        (not is_buy and (current_sl is None or current_sl == 0 or neg_sl < current_sl))
-                    )
-                    
-                    if sl_improves_loss:
-                        # Dodatkowa ochrona: nie pozwól gorsze niż TRAIL_NEG_MAX_LOSS_R
-                        hard_limit_sl = entry_price - one_r * abs(TRAIL_NEG_MAX_LOSS_R) if is_buy \
-                                       else entry_price + one_r * abs(TRAIL_NEG_MAX_LOSS_R)
-                        
-                        # Wybierz lepszy (bliższy entry) z dwóch opcji
-                        if is_buy:
-                            neg_sl = max(neg_sl, hard_limit_sl)
-                        else:
-                            neg_sl = min(neg_sl, hard_limit_sl)
-                        
-                        logging.info(
-                            f"🔴 DynNegTrail | #{ticket} ({symbol}): R={r_multiple:.2f}, "
-                            f"SL: {current_sl:.{digits}f} → {neg_sl:.{digits}f}, "
-                            f"worst={extreme:.{digits}f}, ATR={atr:.{digits}f}"
-                        )
-                        
-                        modify_request = {
-                            "action": mt5.TRADE_ACTION_SLTP,
-                            "position": ticket,
-                            "sl": neg_sl,
-                            "tp": pos.tp,
-                            "symbol": symbol,
-                            "magic": pos.magic,
-                            "comment": f"DynNegTrail R{r_multiple:.1f} {VERSION}",
-                        }
-                        result = mt5.order_send(modify_request)
-                        if result and result.retcode == mt5.TRADE_RETCODE_DONE:
-                            logging.info(
-                                f"✅ DynNegTrail #{ticket} ({symbol}): SL zaktualizowany. "
-                                f"R={r_multiple:.2f}, max loss limit={TRAIL_NEG_MAX_LOSS_R}R"
-                            )
-                        else:
-                            _rc = result.retcode if result else "None"
-                            logging.warning(f"⚠️ DynNegTrail SL modify fail #{ticket}: {_rc}")
-            
             continue
 
         # --- Oblicz ATR dla trailing ---
@@ -1488,14 +1396,12 @@ def update_closed_positions_status(days_back=5, last_update=None):
    
 initialize_mt5()
 logging.info(f"📈 Bot AI version: {VERSION} uruchomiony")
-print(f"[START] Bot AI version: {VERSION} uruchomiony")
+print(f"📈 Bot AI version: {VERSION} uruchomiony")
 
 # === WISDOM AGGREGATOR (v1.4) + MS SQL ===
 mssql = MSSQLWriter()
 mssql.ensure_npm_table()          # NPM: utwórz tabelę jeśli nie istnieje
 mssql.ensure_diagnostics_table()  # DiagLog: utwórz tabelę jeśli nie istnieje
-mssql.ensure_version_history_table()  # Version history: utwórz tabelę jeśli nie istnieje
-mssql.record_version(BOT_VERSION, f"Deploy {datetime.now().strftime('%Y-%m-%d')}")  # Aktualizuj wersję w DB
 mssql.purge_old_logs(days=14)     # Wyczyść logi starsze niż 2 tygodnie
 set_mssql_writer(mssql)  # Połącz tran_logs z bazą MS SQL
 # Przekieruj WARNING+ do tabeli bot_logs
@@ -1503,7 +1409,7 @@ _db_log_handler = DBLogHandler(mssql, min_level=logging.INFO)
 logging.getLogger().addHandler(_db_log_handler)
 wisdom = WisdomAggregator(db=mssql)
 logging.info(f"🧠 Wisdom Aggregator aktywny (MS SQL). Obserwacje w bazie: {wisdom.count_observations()}")
-print(f"[WISDOM] Wisdom Aggregator aktywny (MS SQL). Obserwacje w bazie: {wisdom.count_observations()}")
+print(f"🧠 Wisdom Aggregator aktywny (MS SQL). Obserwacje w bazie: {wisdom.count_observations()}")
 
 # === SYNCHRONIZACJA MT5 → DB przy starcie ===
 try:
@@ -1514,7 +1420,7 @@ try:
     _sync_count += mssql.sync_deals_from_mt5(_sync_deals)
     if _sync_count > 0:
         logging.info(f"🔄 Synchronizacja MT5→DB: {_sync_count} rekordów uzupełnionych.")
-        print(f"[SYNC] Synchronizacja MT5->DB: {_sync_count} rekordów uzupełnionych.")
+        print(f"🔄 Synchronizacja MT5→DB: {_sync_count} rekordów uzupełnionych.")
     else:
         logging.info("🔄 Synchronizacja MT5→DB: baza aktualna.")
 except Exception as _se:
@@ -1524,28 +1430,38 @@ _wisdom_last_outcome_update = datetime.now()
 _wisdom_last_aggregation = datetime.now()
 _bot_start_time = time.time()
 
-# === INITIAL CONFIG LOAD FROM DATABASE ===
-reload_cfg()  # Załaduj config z DB na samym starcie, aby uzyskać świeży blacklist
-
 try:
     last_check = {sym: None for sym in SYMBOLS}
     tran_log_last_update = None
 
     while True:
         reload_cfg()  # Odswież konfigurację z DB na początku każdej iteracji
-        check_and_rotate_logs()  # Sprawdź czy zmienił się dzień - jeśli tak, zarotuj log file
-        
-        # ⚠️ CLOSE BLACKLISTED POSITIONS: Check if any open positions are on blacklist
-        if len(BLACKLIST_SYMBOLS) > 0:
+
+        # === Variant A: Wczytaj/odśwież adaptive conf/lot per symbol (co max 60 min) ===
+        _now_dt = datetime.now()
+        if (symbol_adaptive_last_load is None or
+                (_now_dt - symbol_adaptive_last_load).total_seconds() > 3600):
             try:
-                _open_pos = mt5.positions_get()
-                if _open_pos:
-                    for pos in _open_pos:
-                        if pos.symbol in BLACKLIST_SYMBOLS:
-                            logging.warning(f"🛑 Zamykam pozycję na blacklist'owanym symbolu: {pos.symbol} (ticket: {pos.ticket})")
-                            _close_position(pos)
-            except Exception as e:
-                logging.error(f"Błąd przy zamykaniu pozycji blacklist'owanych: {e}")
+                _perf = mssql.get_symbol_performance(min_trades=ADAPTIVE_MIN_TRADES)
+                _adaptive_new = {}
+                for sym, stats in _perf.items():
+                    _wr = stats.get('winrate', 1.0)
+                    if _wr < ADAPTIVE_WINRATE_THRESH:
+                        _adaptive_new[sym] = {
+                            'conf_boost': ADAPTIVE_CONF_BOOST,
+                            'lot_factor': ADAPTIVE_LOT_FACTOR,
+                            'winrate': _wr,
+                            'n': stats.get('n', 0),
+                        }
+                if _adaptive_new != symbol_adaptive:
+                    logging.warning(
+                        f"[Adaptive] Zaktualizowano dla {len(_adaptive_new)} symboli: "
+                        + ", ".join(f"{s}(WR={v['winrate']:.0%})" for s, v in _adaptive_new.items())
+                    )
+                symbol_adaptive = _adaptive_new
+                symbol_adaptive_last_load = _now_dt
+            except Exception as _adap_e:
+                logging.warning(f"[Adaptive] Błąd wczytywania statystyk: {_adap_e}")
         
         # 🔍 DEBUG: Log current SYMBOLS and BLACKLIST on every iteration
         if len(BLACKLIST_SYMBOLS) > 0:
@@ -1739,7 +1655,16 @@ try:
                 # <0.60 → SKIP (zbyt słaby)
                 # 0.60-0.75 → LOT_MIN (mały lot)
                 # >=0.75 → LOT normalny (silny sygnał)
+                # Variant A: jeśli symbol w adaptive (słabe WR) → podniesiony próg + mniejszy lot
+                _adap = symbol_adaptive.get(symbol)
                 _eff_threshold = CONF_THRESHOLD_SYMBOL.get(symbol, CONF_THRESHOLD_NORMAL)
+                if _adap:
+                    _eff_threshold = min(0.95, _eff_threshold + _adap['conf_boost'])
+                    logging.info(
+                        f"[Adaptive] {symbol} WR={_adap['winrate']:.0%} n={_adap['n']} "
+                        f"→ conf_min+={_adap['conf_boost']:.2f} eff_thresh={_eff_threshold:.2f}, "
+                        f"lot×{_adap['lot_factor']}"
+                    )
                 _use_min_lot = False
                 
                 if decision is not None and prob is not None:
@@ -1757,8 +1682,8 @@ try:
                                 atr=atr,
                                 action_taken="SKIP"
                             )
-                        except Exception as e:
-                            logging.warning(f"[diagnostic] Error writing FILTER_CONFIDENCE: {e}")
+                        except Exception:
+                            pass
                     elif prob < _eff_threshold:
                         # 🟡 WEAK - użyj LOT_MIN (0.60-0.75)
                         logging.info(f"🟡 Weak confidence {prob:.2f} ({CONF_THRESHOLD_MIN}-{_eff_threshold}) → LOT_MIN")
@@ -1769,40 +1694,52 @@ try:
                         _use_min_lot = False
 
                 if atr is not None and decision is not None and prob is not None and prob >= CONF_THRESHOLD_MIN:
-                    # 🧭 Filtr HTF W1→D1: zrelaksowany — blokuj tylko gdy W1 PRZECIWNY do ML.
-                    # D1 neutralny (FLAT) jest dozwolony — blokada = D1 PRZECIWNY + W1 w tym samym kierunku.
+                    # 🧭 Filtr HTF W1→D1→H4 scoring (Variant B)
+                    # Scoring:  W1 zgodny z ML → +2, D1 → +1, H4 → +1 (max 4)
+                    # score 0-1  → BLOCK
+                    # score 2    → WEAK PASS: use_min_lot=True + podniesiony próg conf o HTF_PARTIAL_CONF_BOOST
+                    # score 3-4  → FULL PASS: normalny lot i conf
                     htf = wisdom.get_higher_tf_trend(symbol)
                     ml_direction = "BUY" if decision == 0 else "SELL"
 
                     w1 = htf['w1_trend']  # UP | DOWN | FLAT
                     d1 = htf['d1_trend']  # UP | DOWN | FLAT
-                    w1_dir = "BUY" if w1 == "UP" else ("SELL" if w1 == "DOWN" else None)
-                    d1_dir = "BUY" if d1 == "UP" else ("SELL" if d1 == "DOWN" else None)
+                    h4 = htf.get('h4_trend', 'FLAT')  # UP | DOWN | FLAT
+
+                    def _tf_score(trend, points):
+                        """Zwraca points gdy trend zgodny z ml_direction, 0 gdy FLAT, -points gdy przeciwny."""
+                        if trend == "FLAT":
+                            return 0
+                        t_dir = "BUY" if trend == "UP" else "SELL"
+                        return points if t_dir == ml_direction else -points
+
+                    htf_score = max(0, _tf_score(w1, 2) + _tf_score(d1, 1) + _tf_score(h4, 1))
 
                     htf_blocked = False
+                    htf_partial = False
                     htf_block_reason = None
 
-                    if w1_dir is not None and w1_dir != ml_direction:
-                        # W1 wyraźnie PRZECIWNY do ML → blokada
+                    if htf_score <= 1:
                         htf_blocked = True
-                        htf_block_reason = f"W1={w1} sprzeczny z ML={ml_direction}"
-                    elif w1_dir is not None and d1_dir is not None and d1_dir != w1_dir:
-                        # W1 zgodny z ML, ale D1 sprzeczny z W1 — konflikt HTF → blokada
-                        htf_blocked = True
-                        htf_block_reason = f"W1={w1} vs D1={d1} — konflikt HTF (ML={ml_direction})"
-                    elif w1_dir is None and d1_dir is not None and d1_dir != ml_direction:
-                        # W1 FLAT, D1 PRZECIWNY → blokada
-                        htf_blocked = True
-                        htf_block_reason = f"W1=FLAT, D1={d1} sprzeczny z ML={ml_direction}"
-                    elif w1_dir is None and d1_dir is None:
-                        # Zarówno W1 jak i D1 FLAT — brak trendu nadrzędnego
-                        htf_blocked = True
-                        htf_block_reason = "W1=FLAT, D1=FLAT — brak trendu"
+                        htf_block_reason = (
+                            f"HTF score={htf_score}/4 — zbyt słaba zgodnośc "
+                            f"(W1={w1}, D1={d1}, H4={h4}, ML={ml_direction})"
+                        )
+                    elif htf_score == 2:
+                        # Częściowy sygnał: wymagany wyższy conf + min lot
+                        _partial_conf_min = CONF_THRESHOLD_MIN + HTF_PARTIAL_CONF_BOOST
+                        if prob < _partial_conf_min:
+                            htf_blocked = True
+                            htf_block_reason = (
+                                f"HTF score=2/4 (partial), conf={prob:.3f} < {_partial_conf_min:.3f} — SKIP"
+                            )
+                        else:
+                            htf_partial = True
+                            _use_min_lot = True  # zawsze min lot przy partial
 
                     if htf_blocked:
                         logging.info(
-                            f"⛔ {symbol} — HTF blokada: {htf_block_reason} "
-                            f"(W1={w1}, D1={d1}). Pomijam."
+                            f"⛔ {symbol} — HTF blokada: {htf_block_reason}"
                         )
                         try:
                             mssql.insert_diagnostic(
@@ -1813,24 +1750,28 @@ try:
                                 filter_blocked=True,
                                 filter_reason=htf_block_reason,
                                 htf_w1=w1, htf_d1=d1, htf_aligned=False,
-                                atr=atr, action_taken="SKIP"
+                                atr=atr, action_taken="SKIP",
+                                extra_json=f'{{"htf_score":{htf_score},"h4":"{h4}"}}'
                             )
-                        except Exception as e:
-                            logging.warning(f"[diagnostic] Error writing HTF_BLOCK: {e}")
+                        except Exception:
+                            pass
                     else:
+                        _pass_type = "HTF_PARTIAL" if htf_partial else "HTF_PASS"
                         logging.info(
-                            f"✅ {symbol} — ML={ml_direction} OK vs HTF "
-                            f"(W1={w1}, D1={d1}). Wchodzę."
+                            f"{'🟡' if htf_partial else '✅'} {symbol} — ML={ml_direction} "
+                            f"HTF score={htf_score}/4 (W1={w1}, D1={d1}, H4={h4}). "
+                            f"{'PARTIAL — min lot' if htf_partial else 'FULL — normalny lot'}"
                         )
                         try:
                             mssql.insert_diagnostic(
-                                event_type="HTF_PASS",
+                                event_type=_pass_type,
                                 symbol=symbol,
                                 ml_decision=decision,
                                 ml_confidence=prob,
                                 filter_blocked=False,
-                                htf_w1=w1, htf_d1=d1, htf_aligned=True,
-                                atr=atr, action_taken="ENTER"
+                                htf_w1=w1, htf_d1=d1, htf_aligned=(htf_score >= 3),
+                                atr=atr, action_taken="ENTER",
+                                extra_json=f'{{"htf_score":{htf_score},"h4":"{h4}"}}'
                             )
                         except Exception:
                             pass
@@ -1845,7 +1786,8 @@ try:
                                     f"({_open_count}/{MAX_OPEN_POSITIONS}). Pomijam."
                                 )
                             else:
-                                place_order(symbol, decision, atr, prob, use_min_lot=_use_min_lot)
+                                _adap_lot_f = symbol_adaptive.get(symbol, {}).get('lot_factor', 1.0)
+                                place_order(symbol, decision, atr, prob, use_min_lot=_use_min_lot, lot_factor=_adap_lot_f)
                 else:
                     logging.info(f"ℹ️ Brak decyzji dla {symbol}, predykcja: {prob}")
 
@@ -1890,6 +1832,6 @@ except KeyboardInterrupt:
     print("🛑 Bot zatrzymany przez użytkownika.")
 except Exception as e:
     logging.critical(f"❌ Fatal error: {e}", exc_info=True)
-    print(f"[FATAL] Fatal error: {e}")
+    print(f"❌ Fatal error: {e}")
 finally:
     shutdown_mt5()

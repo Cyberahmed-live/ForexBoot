@@ -321,34 +321,52 @@ class WisdomAggregator:
         return "FLAT"
 
     def get_higher_tf_trend(self, symbol):
-        """Zwraca hierarchiczny trend W1→D1 i zgodność.
+        """Zwraca hierarchiczny trend W1→D1→H4 z punktowym scoringiem.
+
+        Scoring (max 4 pkt):
+          W1 zgodny z ML → +2  (najsilniejszy timeframe)
+          D1 zgodny z ML → +1
+          H4 zgodny z ML → +1  (timeframe wejścia)
+
+        Interpretacja score vs ml_direction:
+          score 4/4 → pełny sygnał, normalny lot
+          score 3/4 → silny sygnał, normalny lot
+          score 2/4 → sygnał częściowy, use_min_lot=True + raised conf
+          score 0-1 → blokada
 
         Returns:
             dict: {
                 'w1_trend': 'UP'|'DOWN'|'FLAT',
                 'd1_trend': 'UP'|'DOWN'|'FLAT',
-                'aligned': bool,          # W1 i D1 zgodne
+                'h4_trend': 'UP'|'DOWN'|'FLAT',
+                'aligned': bool,          # W1 i D1 zgodne (legacy, compat)
+                'htf_score': int,         # 0-4, obliczony względem ml_direction
                 'direction': 'BUY'|'SELL'|None,  # sugerowany kierunek
             }
         """
         w1_df = self._get_rates(symbol, 10080, 60)
         d1_df = self._get_rates(symbol, 1440, 60)
+        h4_df = self._get_rates(symbol, 240, 60)
 
         w1_trend = self._ema_trend(w1_df)
         d1_trend = self._ema_trend(d1_df)
+        h4_trend = self._ema_trend(h4_df)
 
         aligned = (w1_trend == d1_trend) and w1_trend != "FLAT"
         direction = None
         if aligned:
             direction = "BUY" if w1_trend == "UP" else "SELL"
 
+        # htf_score — obliczany w forex_ai_bot po poznaniu ml_direction.
+        # Tutaj zwracamy tylko trendy; score liczymy w miejscu użycia.
         logging.info(
-            f"[Wisdom] {symbol} HTF: W1={w1_trend} D1={d1_trend} "
+            f"[Wisdom] {symbol} HTF: W1={w1_trend} D1={d1_trend} H4={h4_trend} "
             f"aligned={aligned} direction={direction}"
         )
         return {
             'w1_trend': w1_trend,
             'd1_trend': d1_trend,
+            'h4_trend': h4_trend,
             'aligned': aligned,
             'direction': direction,
         }

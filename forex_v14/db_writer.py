@@ -362,6 +362,39 @@ class MSSQLWriter:
         finally:
             con.close()
 
+    def get_symbol_performance(self, min_trades=10):
+        """Zwraca statystyki winrate/profit per symbol dla Adaptive conf/lot.
+
+        Uwzględnia tylko zamknięte transakcje z wynikiem W/S.
+        Minimalny próg trades zapobiega dezaktywacji symboli bez historii.
+
+        Returns:
+            dict: {symbol: {'winrate': float, 'avg_profit': float, 'n': int}}
+        """
+        con = self._conn()
+        try:
+            rows = con.execute(
+                "SELECT symbol, COUNT(*) as n, "
+                "SUM(CASE WHEN result='W' THEN 1.0 ELSE 0 END) as wins, "
+                "ROUND(AVG(profit), 2) as avg_profit "
+                "FROM trades "
+                "WHERE done='Tak' AND result IN ('W','S') "
+                "GROUP BY symbol "
+                "HAVING COUNT(*) >= ?"
+                , (min_trades,)
+            ).fetchall()
+            result = {}
+            for r in rows:
+                sym, n, wins, avg_profit = r
+                result[sym] = {
+                    'winrate': float(wins) / float(n) if n > 0 else 0.0,
+                    'avg_profit': float(avg_profit) if avg_profit is not None else 0.0,
+                    'n': int(n),
+                }
+            return result
+        finally:
+            con.close()
+
     # ------------------------------------------------------------------
     # BOT STATUS (heartbeat)
     # ------------------------------------------------------------------
