@@ -585,7 +585,7 @@ def place_order(symbol, action, atr, pred_proba, use_min_lot=False, lot_factor=1
         "tp": tp,
         "deviation": 10,
         "magic": MAGIC,
-        "comment": f"AI Forex Bot {VERSION}",
+        "comment": f"AI FBoot {VERSION}",
         "type_time": mt5.ORDER_TIME_GTC,
         "type_filling": mt5.ORDER_FILLING_FOK,
     }
@@ -617,7 +617,8 @@ def place_order(symbol, action, atr, pred_proba, use_min_lot=False, lot_factor=1
             ud='S',
             done='Nie',
             atr=atr,
-            profit=0.00
+            profit=0.00,
+            bot_version=VERSION
         )
         return
 
@@ -1436,6 +1437,8 @@ _bot_start_time = time.time()
 try:
     last_check = {sym: None for sym in SYMBOLS}
     tran_log_last_update = None
+    _daily_limit_warned = False   # flaga: czy już zalogowano limit strat (reset co restart)
+    _usd_limit_warned = False      # flaga: czy już zalogowano USD circuit breaker
 
     while True:
         reload_cfg()  # Odswież konfigurację z DB na początku każdej iteracji
@@ -1466,11 +1469,7 @@ try:
             except Exception as _adap_e:
                 logging.warning(f"[Adaptive] Błąd wczytywania statystyk: {_adap_e}")
         
-        # 🔍 DEBUG: Log current SYMBOLS and BLACKLIST on every iteration
-        if len(BLACKLIST_SYMBOLS) > 0:
-            logging.info(f"🚫 BLACKLIST aktywny: {BLACKLIST_SYMBOLS}, SYMBOLS count after filter: {len(SYMBOLS)}")
-        
-        # 👉 Sprawdź czy jest 23:59:00 lub później
+        #  Sprawdź czy jest 23:59:00 lub później
         now = datetime.now()
         if now.hour == 23 and now.minute == 59:
             logging.info("🕛 Jest 23:59:00 - kończę działanie bota.")
@@ -1530,6 +1529,8 @@ try:
         if daily_loss_date != today_str:
             daily_loss_count = 0
             daily_loss_date = today_str
+            _daily_limit_warned = False  # reset flagi przy nowym dniu
+            _usd_limit_warned = False
 
         # --- Variant C: Aktualizuj straty z historii MT5 (od początku dnia kalendarzowego) ---
         try:
@@ -1551,10 +1552,12 @@ try:
 
         # --- Variant C: Blokada po przekroczeniu dziennego limitu strat (liczba) ---
         if daily_loss_count >= MAX_DAILY_LOSSES:
-            logging.warning(
-                f"⛔ Dzienny limit strat osiągnięty ({daily_loss_count}/{MAX_DAILY_LOSSES}). "
-                f"Stop handlu — czekam do następnej iteracji."
-            )
+            if not _daily_limit_warned:
+                logging.warning(
+                    f"⛔ Dzienny limit strat osiągnięty ({daily_loss_count}/{MAX_DAILY_LOSSES}). "
+                    f"Stop handlu do końca dnia."
+                )
+                _daily_limit_warned = True
             # Nadal wykonuj trailing SL + heartbeat, ale nie otwieraj nowych pozycji
             update_trailing_sl()
             time.sleep(TRAILING_UPDATE_SEC)
@@ -1564,10 +1567,12 @@ try:
         try:
             _today_usd = mssql.get_today_loss_usd()
             if _today_usd <= -DAILY_LOSS_USD_LIMIT:
-                logging.warning(
-                    f"⛔ Dzienny limit straty USD osiągnięty ({_today_usd:.2f} USD, "
-                    f"limit: -{DAILY_LOSS_USD_LIMIT:.0f} USD). Stop handlu do końca dnia."
-                )
+                if not _usd_limit_warned:
+                    logging.warning(
+                        f"⛔ Dzienny limit straty USD osiągnięty ({_today_usd:.2f} USD, "
+                        f"limit: -{DAILY_LOSS_USD_LIMIT:.0f} USD). Stop handlu do końca dnia."
+                    )
+                    _usd_limit_warned = True
                 update_trailing_sl()
                 time.sleep(TRAILING_UPDATE_SEC)
                 continue

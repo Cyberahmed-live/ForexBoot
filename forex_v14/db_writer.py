@@ -271,19 +271,19 @@ class MSSQLWriter:
     # ------------------------------------------------------------------
     def insert_trade(self, symbol, direction, price, sl, tp, lot,
                      prediction, status, order_id, confidence, atr,
-                     result="S", profit=0.0, done="Nie"):
+                     result="S", profit=0.0, done="Nie", bot_version=""):
         """Loguje nową transakcję (odpowiednik log_trade z tran_logs.py)."""
         now = datetime.now()
         sql = """
             INSERT INTO trades
                 (open_time, symbol, direction, price, sl, tp, lot,
                  prediction, status, order_id, confidence, atr,
-                 result, profit, done)
-            VALUES (?,?,?,?,?,?,?, ?,?,?,?,?, ?,?,?)
+                 result, profit, done, bot_version)
+            VALUES (?,?,?,?,?,?,?, ?,?,?,?,?, ?,?,?,?)
         """
         params = (now, symbol, direction[:10], price, sl, tp, lot,
                   str(prediction)[:50], str(status)[:30], order_id, confidence, atr,
-                  str(result)[:5], profit, str(done)[:5])
+                  str(result)[:5], profit, str(done)[:5], str(bot_version)[:20])
         with self._lock:
             con = self._conn()
             try:
