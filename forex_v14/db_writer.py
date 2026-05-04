@@ -349,6 +349,19 @@ class MSSQLWriter:
         finally:
             con.close()
 
+    def get_today_loss_usd(self):
+        """Zwraca łączny zrealizowany profit/loss za bieżący dzień (od północy).
+        Wartość ujemna oznacza stratę. Używane przez circuit breaker USD."""
+        con = self._conn()
+        try:
+            row = con.execute(
+                "SELECT ISNULL(SUM(profit), 0) FROM trades "
+                "WHERE close_time >= CAST(GETDATE() AS DATE) AND done = 'Tak'"
+            ).fetchone()
+            return float(row[0]) if row else 0.0
+        finally:
+            con.close()
+
     # ------------------------------------------------------------------
     # BOT STATUS (heartbeat)
     # ------------------------------------------------------------------
