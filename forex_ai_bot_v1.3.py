@@ -61,6 +61,11 @@ SYMBOL_COOLDOWN_H       = float(get_global_cfg("symbol_cooldown_hours"))  # Cool
 MAX_DAILY_LOSSES        = int(get_global_cfg("max_daily_losses"))         # Max losses per day
 MAX_OPEN_POSITIONS      = int(get_global_cfg("max_open_positions"))       # Max simultaneous open positions
 DAILY_LOSS_USD_LIMIT    = float(get_global_cfg("daily_loss_usd_limit") or 1000)  # Max USD daily loss → stop trading
+HTF_PARTIAL_CONF_BOOST  = float(get_global_cfg("htf_partial_conf_boost") or 0.05)  # +conf wymagany dla score=2/4
+ADAPTIVE_MIN_TRADES     = int(get_global_cfg("adaptive_min_trades") or 10)        # Min trade/symbol do adaptive
+ADAPTIVE_WINRATE_THRESH = float(get_global_cfg("adaptive_winrate_thresh") or 0.35) # WR < 35% → boost conf/reduce lot
+ADAPTIVE_CONF_BOOST     = float(get_global_cfg("adaptive_conf_boost") or 0.10)    # +conf dla słabych symboli
+ADAPTIVE_LOT_FACTOR     = float(get_global_cfg("adaptive_lot_factor") or 0.5)     # lot * 0.5 dla słabych symboli
 # --- Variant C: ochrona pozycji ---
 PARTIAL_CLOSE_R         = float(get_global_cfg("partial_close_r"))        # Partial close at R>=1.5
 PARTIAL_CLOSE_PCT       = float(get_global_cfg("partial_close_pct"))      # % to close (0.5 = 50%)
@@ -84,6 +89,7 @@ def reload_cfg():
     global SYMBOLS, BLACKLIST_SYMBOLS, LOT, LOT_MIN, LOT_MIN_SYMBOL, CONF_THRESHOLD_SYMBOL, CONF_THRESHOLD_MIN, CONF_THRESHOLD_NORMAL, TP_ATR_MULTIPLIER, SL_ATR_MULTIPLIER, ATR_MIN
     global PREDICT_PROBA_THRESHOLD, MIN_HOLD_SECONDS, MIN_RR_RATIO, SPREAD_FILTER_PCT
     global VOL_BLOCK_START, VOL_BLOCK_END, SYMBOL_COOLDOWN_H, MAX_DAILY_LOSSES, MAX_OPEN_POSITIONS, DAILY_LOSS_USD_LIMIT
+    global HTF_PARTIAL_CONF_BOOST, ADAPTIVE_MIN_TRADES, ADAPTIVE_WINRATE_THRESH, ADAPTIVE_CONF_BOOST, ADAPTIVE_LOT_FACTOR
     global PARTIAL_CLOSE_R, PARTIAL_CLOSE_PCT, TIME_EXIT_HOURS
     global TRAIL_BE_R, TRAIL_LOCK_R, TRAIL_LOCK_FRAC, TRAIL_ATR_R, TRAIL_ATR_FACTOR
     global TRAIL_TIGHT_R, TRAIL_TIGHT_FACTOR, TRAILING_UPDATE_SEC
@@ -132,6 +138,11 @@ def reload_cfg():
         MAX_DAILY_LOSSES     = _i('max_daily_losses',       MAX_DAILY_LOSSES)
         MAX_OPEN_POSITIONS   = _i('max_open_positions',     MAX_OPEN_POSITIONS)
         DAILY_LOSS_USD_LIMIT = _f('daily_loss_usd_limit',   DAILY_LOSS_USD_LIMIT)
+        HTF_PARTIAL_CONF_BOOST  = _f('htf_partial_conf_boost',   HTF_PARTIAL_CONF_BOOST)
+        ADAPTIVE_MIN_TRADES     = _i('adaptive_min_trades',      ADAPTIVE_MIN_TRADES)
+        ADAPTIVE_WINRATE_THRESH = _f('adaptive_winrate_thresh',  ADAPTIVE_WINRATE_THRESH)
+        ADAPTIVE_CONF_BOOST     = _f('adaptive_conf_boost',      ADAPTIVE_CONF_BOOST)
+        ADAPTIVE_LOT_FACTOR     = _f('adaptive_lot_factor',      ADAPTIVE_LOT_FACTOR)
         PARTIAL_CLOSE_R      = _f('partial_close_r',        PARTIAL_CLOSE_R)
         PARTIAL_CLOSE_PCT    = _f('partial_close_pct',      PARTIAL_CLOSE_PCT)
         TIME_EXIT_HOURS      = _f('time_exit_hours',        TIME_EXIT_HOURS)
@@ -169,6 +180,10 @@ daily_loss_count = 0       # Licznik strat w bieżącym dniu
 daily_loss_date = None     # Data ostatniego resetu licznika
 partial_closed_tickets = set()  # Pozycje już częściowo zamknięte
 npm_scaled_exit_tickets = set()  # Pozycje z NPM skalowanym zamknięciem 50%
+# === Variant A: Adaptive conf/lot per symbol ===
+# {symbol: {'conf_boost': float, 'lot_factor': float, 'winrate': float, 'n': int}}
+symbol_adaptive = {}       # ładowane przy starcie i reload_cfg co ~5 min
+symbol_adaptive_last_load = None  # datetime ostatniego wczytania
 # === LOGOWANIE ===
 # Utwórz katalog na logi, jeśli nie istnieje
 os.makedirs(get_global_cfg("logs_dir"), exist_ok=True)
@@ -403,7 +418,7 @@ def calculate_fibo_tp(df, action, fibo_level=TP_ATR_MULTIPLIER, window=CANDLES):
         tp = low + (high - low) * (1 - fibo_level)
     return tp
 
-def place_order(symbol, action, atr, pred_proba, use_min_lot=False):
+def place_order(symbol, action, atr, pred_proba, use_min_lot=False, lot_factor=1.0):
     if not mt5.symbol_select(symbol, True):
         logging.warning(f"⚠️ Nie udało się aktywować symbolu {symbol}")
         return
@@ -526,6 +541,13 @@ def place_order(symbol, action, atr, pred_proba, use_min_lot=False):
 
     sl_distance = abs(price - sl)
     lot = calculate_lot_size(symbol, sl_distance, risk_percent=2.0, confidence=pred_proba, use_min_lot=use_min_lot)
+    # Variant A: adaptive lot factor dla słabych symboli
+    if lot_factor != 1.0:
+        _info = mt5.symbol_info(symbol)
+        _vmin = _info.volume_min if _info else 0.01
+        _vstep = _info.volume_step if _info else 0.01
+        lot = max(_vmin, round(lot * lot_factor / _vstep) * _vstep)
+        logging.info(f"[Adaptive] {symbol} lot_factor={lot_factor} → final lot={lot:.2f}")
 
     # WALIDACJA I LOGOWANIE
     logging.info(
@@ -1414,6 +1436,32 @@ try:
 
     while True:
         reload_cfg()  # Odswież konfigurację z DB na początku każdej iteracji
+
+        # === Variant A: Wczytaj/odśwież adaptive conf/lot per symbol (co max 60 min) ===
+        _now_dt = datetime.now()
+        if (symbol_adaptive_last_load is None or
+                (_now_dt - symbol_adaptive_last_load).total_seconds() > 3600):
+            try:
+                _perf = mssql.get_symbol_performance(min_trades=ADAPTIVE_MIN_TRADES)
+                _adaptive_new = {}
+                for sym, stats in _perf.items():
+                    _wr = stats.get('winrate', 1.0)
+                    if _wr < ADAPTIVE_WINRATE_THRESH:
+                        _adaptive_new[sym] = {
+                            'conf_boost': ADAPTIVE_CONF_BOOST,
+                            'lot_factor': ADAPTIVE_LOT_FACTOR,
+                            'winrate': _wr,
+                            'n': stats.get('n', 0),
+                        }
+                if _adaptive_new != symbol_adaptive:
+                    logging.warning(
+                        f"[Adaptive] Zaktualizowano dla {len(_adaptive_new)} symboli: "
+                        + ", ".join(f"{s}(WR={v['winrate']:.0%})" for s, v in _adaptive_new.items())
+                    )
+                symbol_adaptive = _adaptive_new
+                symbol_adaptive_last_load = _now_dt
+            except Exception as _adap_e:
+                logging.warning(f"[Adaptive] Błąd wczytywania statystyk: {_adap_e}")
         
         # 🔍 DEBUG: Log current SYMBOLS and BLACKLIST on every iteration
         if len(BLACKLIST_SYMBOLS) > 0:
@@ -1607,7 +1655,16 @@ try:
                 # <0.60 → SKIP (zbyt słaby)
                 # 0.60-0.75 → LOT_MIN (mały lot)
                 # >=0.75 → LOT normalny (silny sygnał)
+                # Variant A: jeśli symbol w adaptive (słabe WR) → podniesiony próg + mniejszy lot
+                _adap = symbol_adaptive.get(symbol)
                 _eff_threshold = CONF_THRESHOLD_SYMBOL.get(symbol, CONF_THRESHOLD_NORMAL)
+                if _adap:
+                    _eff_threshold = min(0.95, _eff_threshold + _adap['conf_boost'])
+                    logging.info(
+                        f"[Adaptive] {symbol} WR={_adap['winrate']:.0%} n={_adap['n']} "
+                        f"→ conf_min+={_adap['conf_boost']:.2f} eff_thresh={_eff_threshold:.2f}, "
+                        f"lot×{_adap['lot_factor']}"
+                    )
                 _use_min_lot = False
                 
                 if decision is not None and prob is not None:
@@ -1637,40 +1694,52 @@ try:
                         _use_min_lot = False
 
                 if atr is not None and decision is not None and prob is not None and prob >= CONF_THRESHOLD_MIN:
-                    # 🧭 Filtr HTF W1→D1: zrelaksowany — blokuj tylko gdy W1 PRZECIWNY do ML.
-                    # D1 neutralny (FLAT) jest dozwolony — blokada = D1 PRZECIWNY + W1 w tym samym kierunku.
+                    # 🧭 Filtr HTF W1→D1→H4 scoring (Variant B)
+                    # Scoring:  W1 zgodny z ML → +2, D1 → +1, H4 → +1 (max 4)
+                    # score 0-1  → BLOCK
+                    # score 2    → WEAK PASS: use_min_lot=True + podniesiony próg conf o HTF_PARTIAL_CONF_BOOST
+                    # score 3-4  → FULL PASS: normalny lot i conf
                     htf = wisdom.get_higher_tf_trend(symbol)
                     ml_direction = "BUY" if decision == 0 else "SELL"
 
                     w1 = htf['w1_trend']  # UP | DOWN | FLAT
                     d1 = htf['d1_trend']  # UP | DOWN | FLAT
-                    w1_dir = "BUY" if w1 == "UP" else ("SELL" if w1 == "DOWN" else None)
-                    d1_dir = "BUY" if d1 == "UP" else ("SELL" if d1 == "DOWN" else None)
+                    h4 = htf.get('h4_trend', 'FLAT')  # UP | DOWN | FLAT
+
+                    def _tf_score(trend, points):
+                        """Zwraca points gdy trend zgodny z ml_direction, 0 gdy FLAT, -points gdy przeciwny."""
+                        if trend == "FLAT":
+                            return 0
+                        t_dir = "BUY" if trend == "UP" else "SELL"
+                        return points if t_dir == ml_direction else -points
+
+                    htf_score = max(0, _tf_score(w1, 2) + _tf_score(d1, 1) + _tf_score(h4, 1))
 
                     htf_blocked = False
+                    htf_partial = False
                     htf_block_reason = None
 
-                    if w1_dir is not None and w1_dir != ml_direction:
-                        # W1 wyraźnie PRZECIWNY do ML → blokada
+                    if htf_score <= 1:
                         htf_blocked = True
-                        htf_block_reason = f"W1={w1} sprzeczny z ML={ml_direction}"
-                    elif w1_dir is not None and d1_dir is not None and d1_dir != w1_dir:
-                        # W1 zgodny z ML, ale D1 sprzeczny z W1 — konflikt HTF → blokada
-                        htf_blocked = True
-                        htf_block_reason = f"W1={w1} vs D1={d1} — konflikt HTF (ML={ml_direction})"
-                    elif w1_dir is None and d1_dir is not None and d1_dir != ml_direction:
-                        # W1 FLAT, D1 PRZECIWNY → blokada
-                        htf_blocked = True
-                        htf_block_reason = f"W1=FLAT, D1={d1} sprzeczny z ML={ml_direction}"
-                    elif w1_dir is None and d1_dir is None:
-                        # Zarówno W1 jak i D1 FLAT — brak trendu nadrzędnego
-                        htf_blocked = True
-                        htf_block_reason = "W1=FLAT, D1=FLAT — brak trendu"
+                        htf_block_reason = (
+                            f"HTF score={htf_score}/4 — zbyt słaba zgodnośc "
+                            f"(W1={w1}, D1={d1}, H4={h4}, ML={ml_direction})"
+                        )
+                    elif htf_score == 2:
+                        # Częściowy sygnał: wymagany wyższy conf + min lot
+                        _partial_conf_min = CONF_THRESHOLD_MIN + HTF_PARTIAL_CONF_BOOST
+                        if prob < _partial_conf_min:
+                            htf_blocked = True
+                            htf_block_reason = (
+                                f"HTF score=2/4 (partial), conf={prob:.3f} < {_partial_conf_min:.3f} — SKIP"
+                            )
+                        else:
+                            htf_partial = True
+                            _use_min_lot = True  # zawsze min lot przy partial
 
                     if htf_blocked:
                         logging.info(
-                            f"⛔ {symbol} — HTF blokada: {htf_block_reason} "
-                            f"(W1={w1}, D1={d1}). Pomijam."
+                            f"⛔ {symbol} — HTF blokada: {htf_block_reason}"
                         )
                         try:
                             mssql.insert_diagnostic(
@@ -1681,24 +1750,28 @@ try:
                                 filter_blocked=True,
                                 filter_reason=htf_block_reason,
                                 htf_w1=w1, htf_d1=d1, htf_aligned=False,
-                                atr=atr, action_taken="SKIP"
+                                atr=atr, action_taken="SKIP",
+                                extra_json=f'{{"htf_score":{htf_score},"h4":"{h4}"}}'
                             )
                         except Exception:
                             pass
                     else:
+                        _pass_type = "HTF_PARTIAL" if htf_partial else "HTF_PASS"
                         logging.info(
-                            f"✅ {symbol} — ML={ml_direction} OK vs HTF "
-                            f"(W1={w1}, D1={d1}). Wchodzę."
+                            f"{'🟡' if htf_partial else '✅'} {symbol} — ML={ml_direction} "
+                            f"HTF score={htf_score}/4 (W1={w1}, D1={d1}, H4={h4}). "
+                            f"{'PARTIAL — min lot' if htf_partial else 'FULL — normalny lot'}"
                         )
                         try:
                             mssql.insert_diagnostic(
-                                event_type="HTF_PASS",
+                                event_type=_pass_type,
                                 symbol=symbol,
                                 ml_decision=decision,
                                 ml_confidence=prob,
                                 filter_blocked=False,
-                                htf_w1=w1, htf_d1=d1, htf_aligned=True,
-                                atr=atr, action_taken="ENTER"
+                                htf_w1=w1, htf_d1=d1, htf_aligned=(htf_score >= 3),
+                                atr=atr, action_taken="ENTER",
+                                extra_json=f'{{"htf_score":{htf_score},"h4":"{h4}"}}'
                             )
                         except Exception:
                             pass
@@ -1713,7 +1786,8 @@ try:
                                     f"({_open_count}/{MAX_OPEN_POSITIONS}). Pomijam."
                                 )
                             else:
-                                place_order(symbol, decision, atr, prob, use_min_lot=_use_min_lot)
+                                _adap_lot_f = symbol_adaptive.get(symbol, {}).get('lot_factor', 1.0)
+                                place_order(symbol, decision, atr, prob, use_min_lot=_use_min_lot, lot_factor=_adap_lot_f)
                 else:
                     logging.info(f"ℹ️ Brak decyzji dla {symbol}, predykcja: {prob}")
 
