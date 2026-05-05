@@ -192,13 +192,15 @@ symbol_adaptive_last_load = None  # datetime ostatniego wczytania
 # Utwórz katalog na logi, jeśli nie istnieje
 os.makedirs(get_global_cfg("logs_dir"), exist_ok=True)
 
-# Konfiguracja logowania
-logging.basicConfig(
-    filename=LOG_FILE,  # Pobierz ścieżkę do pliku loga
-    level=logging.INFO,
-    format='%(asctime)s [%(levelname)s] %(message)s',
-    encoding='utf-8'
-)
+# Konfiguracja logowania — explicit FileHandler zamiast basicConfig (który jest no-op gdy
+# jakikolwiek moduł zainicjował root logger przed nami)
+_log_formatter = logging.Formatter('%(asctime)s [%(levelname)s] %(message)s')
+_log_file_handler = logging.FileHandler(LOG_FILE, encoding='utf-8')
+_log_file_handler.setFormatter(_log_formatter)
+for _h in logging.root.handlers[:]:
+    logging.root.removeHandler(_h)
+logging.root.addHandler(_log_file_handler)
+logging.root.setLevel(logging.INFO)
 
 logging.info(
     f"Bot v{get_global_cfg('version')} | "
@@ -1213,7 +1215,7 @@ def update_trailing_sl():
             reconnect_mt5()
             continue
         if result.retcode == mt5.TRADE_RETCODE_DONE:
-            logging.info(f"✅ SL Stage {stage}: {symbol} | SL: {new_sl:.{digits}f}")
+            logging.warning(f"🔒 Trail SL S{stage} #{ticket} {symbol}: R={r_multiple:.2f} | SL {current_sl:.{digits}f}→{new_sl:.{digits}f}")
         else:
             logging.warning(f"⚠️ Trailing SL fail {symbol}: {result.retcode} — {result.comment}")
 
@@ -1532,8 +1534,19 @@ try:
                 )
             except Exception as e:
                 logging.error(f"❌ Heartbeat error (paused): {e}")
-            # W weekend śpij 30 min zamiast 5 min — rynek zamknięty, nie ma pośpiechu
-            _sleep_sec = 1800 if datetime.now().weekday() >= 5 else 300
+            # W weekend śpij 30 min zamiast 5 min — ale nie overshooting midnight!
+            # Oblicz max czas snu tak żeby obudzić się przed 23:55 (okno na exit 23:58)
+            _now_sleep = datetime.now()
+            if _now_sleep.weekday() >= 5:
+                _target_wake = _now_sleep.replace(hour=23, minute=55, second=0, microsecond=0)
+                if _now_sleep >= _target_wake:
+                    # Już po 23:55 — wróć do krótkiego sleep
+                    _sleep_sec = 60
+                else:
+                    _secs_to_target = (_target_wake - _now_sleep).total_seconds()
+                    _sleep_sec = int(min(1800, _secs_to_target))
+            else:
+                _sleep_sec = 300
             time.sleep(_sleep_sec)
             continue
         # Uruchom ponowne trenowanie modeli
