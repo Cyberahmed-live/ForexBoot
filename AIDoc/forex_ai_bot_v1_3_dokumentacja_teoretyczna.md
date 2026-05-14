@@ -85,6 +85,23 @@ Po wdrożeniu:
 - analiza jakości strategii i risk management jest bardziej wiarygodna,
 - łatwiejszy audyt zgodności `trades` ↔ `trade_outcomes`.
 
+### 0.6 Zaostrzenie wejść i limitów ryzyka per symbol — zmiana 2026-05-14
+
+**Powód**: audyt produkcyjny pokazał, że największe straty pochodziły nie z awarii logiki, tylko z wejść o niskim confidence (`0.60–0.65`) oraz zbyt dużej ekspozycji pieniężnej na wybranych symbolach, szczególnie `XAGUSD` i części crossów `CHF/JPY`.
+
+**Zmiana A — próg jakości sygnału:**
+- globalny minimalny próg wejścia podniesiony z `0.60` do `0.65`,
+- dla ryzykownych symboli dodano jeszcze wyższe minima per-symbol (`0.67–0.70`).
+
+**Zmiana B — twarde limity ekspozycji:**
+- dodano `max_lot_<SYMBOL>` jako hard cap po całym sizingu,
+- dzięki temu nawet jeśli model dopuści wejście, strata pieniężna na symbolach wysokiego ryzyka nie może eskalować powyżej ustalonego pułapu.
+
+**Efekt biznesowy:**
+- mniej transakcji z pogranicza jakości sygnału,
+- mniejsze ryzyko strat jednostkowych na metalach i wybranych crossach,
+- strategia pozostaje aktywna, ale działa bardziej selektywnie i defensywnie.
+
 ---
 
 ## 1. Wizja i filozofia wersji 1.4
