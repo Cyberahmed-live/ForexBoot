@@ -420,7 +420,7 @@ Checks W1 (weekly) and D1 (daily) trend alignment before order placement.
 
 Syncs MT5 deal history and open positions to MS SQL `trades` table:
 - Filters only `DEAL_ENTRY_OUT` deals (closing transactions)
-- Uses `deal.position_id` (not `deal.order`) to match DB `order_id` — closing deal has a different order ticket than the original position
+- Uses `deal.position_id` as primary key (`trades.mt5_position_id`) and `deal.order` as fallback (`trades.mt5_order_id`)
 - Closed deals: marks `done='Tak'`, saves `profit`, `result`, `close_time`, records `trade_outcomes`
 - Open positions: updates `profit`, `result`, `sl`, `tp`, `current_price`, `swap`, `duration_hours`
 
@@ -431,8 +431,9 @@ Reconciles open MT5 positions with `trades` table. Missing records inserted with
 #### `MSSQLWriter.sync_deals_from_mt5(deals)`
 
 Reconciles MT5 deal history with `trades` + `trade_outcomes` tables.
-- `DEAL_ENTRY_IN`: inserts missing trade opens (uses `deal.order`)
-- `DEAL_ENTRY_OUT`: updates status + inserts outcomes (uses `deal.position_id` to match original trade)
+- `DEAL_ENTRY_IN`: inserts missing trade opens and stores both IDs (`mt5_order_id=deal.order`, `mt5_position_id=deal.position_id`)
+- `DEAL_ENTRY_OUT`: updates status by `mt5_position_id` (with order fallback)
+- If a close deal appears without existing open row (manual trade / missed open sync), bot inserts closed `SYNCED` trade to preserve full history in `trades`
 
 **Sync schedule:**
 - Bot startup: 7 days back
@@ -548,7 +549,9 @@ Server=localhost; Database=ForexBotDB; Trusted_Connection=yes; Driver={ODBC Driv
 | `lot` | FLOAT | Position volume |
 | `prediction` | NVARCHAR(10) | ML prediction or 'SYNC' |
 | `status` | NVARCHAR(30) | Order status (OK / SYNCED) |
-| `order_id` | BIGINT | MT5 ticket |
+| `order_id` | BIGINT | Legacy MT5 ID (backward compatibility) |
+| `mt5_order_id` | BIGINT | MT5 order ticket (deal/order layer) |
+| `mt5_position_id` | BIGINT | MT5 position ticket (position lifecycle key) |
 | `confidence` | FLOAT | Model confidence |
 | `atr` | FLOAT | ATR at entry |
 | `result` | NVARCHAR(5) | Z (profit) / S (loss) — live updated |
@@ -573,6 +576,7 @@ Server=localhost; Database=ForexBotDB; Trusted_Connection=yes; Driver={ODBC Driv
 | 7 | ~~`check_margin_available()` never called~~ | `place_order()` | ~~Unused check~~ | Margin check inside `calculate_lot_size()` (70% cap) |
 | 8 | Time calculation `abs(open_time - time.time())` | `update_trailing_sl()` | Wrong duration | Open |
 | 9 | ~~Duplicate `return` after spread filter~~ | `place_order()` L395 | ~~Unreachable code~~ | **FIXED 2026-04** |
+| 10 | ~~Manual trades partially missing in `trades` due to order/position ID mismatch~~ | `db_writer.py` sync layer | ~~Inconsistent reporting~~ | **FIXED 2026-05-14 (Variant B)** |
 
 ## 10. Recommended Improvements
 
@@ -586,6 +590,25 @@ Server=localhost; Database=ForexBotDB; Trusted_Connection=yes; Driver={ODBC Driv
 ---
 
 ## 11. Changelog
+
+### 2026-05-14 — Variant B (MT5 ID normalization for manual/synced trades)
+
+#### `forex_v14/db_writer.py`
+- Added automatic schema migration: `ensure_trades_mt5_columns()` creates `trades.mt5_order_id` and `trades.mt5_position_id` when missing.
+- Added safe backfill for historical rows:
+       - `mt5_order_id <- order_id`
+       - `mt5_position_id <- order_id` (fallback for old data)
+- Added indexes: `ix_trades_mt5_order_id`, `ix_trades_mt5_position_id`.
+- `insert_trade()` now stores both MT5 IDs (`mt5_order_id`, `mt5_position_id`).
+- `update_trade_status()` now matches by `mt5_position_id` (primary), `mt5_order_id` (fallback), and legacy `order_id`.
+- `sync_deals_from_mt5()` now inserts closed `SYNCED` row when `DEAL_ENTRY_OUT` has no matching open row (manual trade/missed IN sync).
+
+#### `forex_ai_bot_v1.3.py`
+- Startup now calls `mssql.ensure_trades_mt5_columns()` before sync.
+- `update_closed_positions_status()` now updates records using both MT5 IDs (`mt5_position_id` + `mt5_order_id`) with legacy fallback.
+
+#### Efekt biznesowy
+- Manual trades and broker-side transactions are now consistently represented in `trades` and can be linked with `trade_outcomes` without relying on ambiguous `order_id` semantics.
 
 ### 2026-05-04 (popołudnie) — poprawki jakości logów + bot_version w trades
 

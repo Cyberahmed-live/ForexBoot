@@ -48,6 +48,64 @@ class MSSQLWriter:
         return _connect(self._conn_str)
 
     # ------------------------------------------------------------------
+    # MT5 ID schema migration (Variant B)
+    # ------------------------------------------------------------------
+    def ensure_trades_mt5_columns(self):
+        """Zapewnia kolumny mt5_order_id i mt5_position_id w tabeli trades.
+
+        Wykonuje bezpieczny backfill historycznych rekordow:
+        - mt5_order_id    <- order_id
+        - mt5_position_id <- order_id (fallback dla starszych danych)
+        """
+        sql_add_order = """
+        IF COL_LENGTH('trades', 'mt5_order_id') IS NULL
+            ALTER TABLE trades ADD mt5_order_id BIGINT NULL;
+        """
+        sql_add_position = """
+        IF COL_LENGTH('trades', 'mt5_position_id') IS NULL
+            ALTER TABLE trades ADD mt5_position_id BIGINT NULL;
+        """
+        sql_backfill_order = """
+        UPDATE trades
+        SET mt5_order_id = order_id
+        WHERE mt5_order_id IS NULL
+          AND ISNULL(order_id, 0) <> 0;
+        """
+        sql_backfill_position = """
+        UPDATE trades
+        SET mt5_position_id = order_id
+        WHERE mt5_position_id IS NULL
+          AND ISNULL(order_id, 0) <> 0;
+        """
+        sql_ix_order = """
+        IF NOT EXISTS (
+            SELECT 1 FROM sys.indexes
+            WHERE name = 'ix_trades_mt5_order_id' AND object_id = OBJECT_ID('trades')
+        )
+            CREATE INDEX ix_trades_mt5_order_id ON trades(mt5_order_id);
+        """
+        sql_ix_position = """
+        IF NOT EXISTS (
+            SELECT 1 FROM sys.indexes
+            WHERE name = 'ix_trades_mt5_position_id' AND object_id = OBJECT_ID('trades')
+        )
+            CREATE INDEX ix_trades_mt5_position_id ON trades(mt5_position_id);
+        """
+        with self._lock:
+            con = self._conn()
+            try:
+                con.execute(sql_add_order)
+                con.execute(sql_add_position)
+                con.execute(sql_backfill_order)
+                con.execute(sql_backfill_position)
+                con.execute(sql_ix_order)
+                con.execute(sql_ix_position)
+                con.commit()
+                logging.info("[MSSQL] trades: mt5_order_id/mt5_position_id ready (with backfill).")
+            finally:
+                con.close()
+
+    # ------------------------------------------------------------------
     # OBSERVATIONS (Wisdom Aggregator)
     # ------------------------------------------------------------------
     def insert_observation(self, symbol, timeframe, candle_score, formation_type,
@@ -271,19 +329,25 @@ class MSSQLWriter:
     # ------------------------------------------------------------------
     def insert_trade(self, symbol, direction, price, sl, tp, lot,
                      prediction, status, order_id, confidence, atr,
-                     result="S", profit=0.0, done="Nie", bot_version=""):
+                     result="S", profit=0.0, done="Nie", bot_version="",
+                     mt5_order_id=None, mt5_position_id=None):
         """Loguje nową transakcję (odpowiednik log_trade z tran_logs.py)."""
         now = datetime.now()
+        if mt5_order_id is None:
+            mt5_order_id = order_id
+        if mt5_position_id is None:
+            mt5_position_id = order_id
         sql = """
             INSERT INTO trades
                 (open_time, symbol, direction, price, sl, tp, lot,
-                 prediction, status, order_id, confidence, atr,
-                 result, profit, done, bot_version)
-            VALUES (?,?,?,?,?,?,?, ?,?,?,?,?, ?,?,?,?)
+                 prediction, status, order_id, mt5_order_id, mt5_position_id,
+                 confidence, atr, result, profit, done, bot_version)
+            VALUES (?,?,?,?,?,?,?, ?,?,?,?,?, ?,?,?,?,?, ?)
         """
         params = (now, symbol, direction[:10], price, sl, tp, lot,
-                  str(prediction)[:50], str(status)[:30], order_id, confidence, atr,
-                  str(result)[:5], profit, str(done)[:5], str(bot_version)[:20])
+                  str(prediction)[:50], str(status)[:30], order_id,
+                  mt5_order_id, mt5_position_id,
+                  confidence, atr, str(result)[:5], profit, str(done)[:5], str(bot_version)[:20])
         with self._lock:
             con = self._conn()
             try:
@@ -292,10 +356,10 @@ class MSSQLWriter:
             finally:
                 con.close()
 
-    def update_trade_status(self, order_id, profit=None, result=None,
-                            done=None, close_time=None,
-                            sl=None, tp=None, current_price=None,
-                            swap=None, duration_hours=None):
+    def update_trade_status(self, order_id=None, mt5_order_id=None, mt5_position_id=None,
+                            profit=None, result=None, done=None, close_time=None,
+                            sl=None, tp=None, current_price=None, swap=None,
+                            duration_hours=None):
         """Aktualizuje status transakcji (profit, Z/S, done, close_time, sl, tp, current_price, swap, duration)."""
         sets = []
         params = []
@@ -328,8 +392,49 @@ class MSSQLWriter:
             params.append(duration_hours)
         if not sets:
             return
-        params.append(order_id)
-        sql = f"UPDATE trades SET {', '.join(sets)} WHERE order_id = ?"
+
+        where_parts = []
+        if mt5_position_id is not None:
+            where_parts.append("mt5_position_id = ?")
+            params.append(mt5_position_id)
+        if mt5_order_id is not None:
+            where_parts.append("mt5_order_id = ?")
+            params.append(mt5_order_id)
+        if order_id is not None:
+            # Legacy fallback dla starszego kodu/rekordow.
+            where_parts.append("order_id = ?")
+            params.append(order_id)
+
+        if not where_parts:
+            return
+
+        sql = f"UPDATE trades SET {', '.join(sets)} WHERE ({' OR '.join(where_parts)})"
+        with self._lock:
+            con = self._conn()
+            try:
+                con.execute(sql, params)
+                con.commit()
+            finally:
+                con.close()
+
+    def update_trade_mt5_ids(self, order_id=None, mt5_order_id=None, mt5_position_id=None):
+        """Uzupełnia mapowanie identyfikatorów MT5 dla istniejącego rekordu trades."""
+        sets = []
+        params = []
+        if mt5_order_id is not None:
+            sets.append("mt5_order_id = ?")
+            params.append(mt5_order_id)
+        if mt5_position_id is not None:
+            sets.append("mt5_position_id = ?")
+            params.append(mt5_position_id)
+        if not sets or order_id is None:
+            return
+
+        sql = (
+            f"UPDATE trades SET {', '.join(sets)} "
+            "WHERE order_id = ? OR mt5_order_id = ? OR mt5_position_id = ?"
+        )
+        params.extend([order_id, order_id, order_id])
         with self._lock:
             con = self._conn()
             try:
@@ -485,16 +590,33 @@ class MSSQLWriter:
     # ------------------------------------------------------------------
     # SYNCHRONIZACJA MT5 → DB (reconciliation)
     # ------------------------------------------------------------------
-    def _order_exists(self, order_id):
-        """Sprawdza czy order_id istnieje w tabeli trades."""
+    def _trade_exists(self, mt5_order_id=None, mt5_position_id=None):
+        """Sprawdza czy rekord trades istnieje po mt5_order_id/mt5_position_id.
+
+        Dla kompatybilności uwzględnia też historyczne pole order_id.
+        """
+        where_parts = []
+        params = []
+        if mt5_order_id is not None:
+            where_parts.extend(["mt5_order_id = ?", "order_id = ?"])
+            params.extend([mt5_order_id, mt5_order_id])
+        if mt5_position_id is not None:
+            where_parts.extend(["mt5_position_id = ?", "order_id = ?"])
+            params.extend([mt5_position_id, mt5_position_id])
+        if not where_parts:
+            return False
+
+        sql = f"SELECT TOP 1 1 FROM trades WHERE {' OR '.join(where_parts)}"
         con = self._conn()
         try:
-            row = con.execute(
-                "SELECT 1 FROM trades WHERE order_id = ?", (order_id,)
-            ).fetchone()
+            row = con.execute(sql, tuple(params)).fetchone()
             return row is not None
         finally:
             con.close()
+
+    def _order_exists(self, order_id):
+        """Legacy wrapper (dla kompatybilności istniejących wywołań)."""
+        return self._trade_exists(mt5_order_id=order_id)
 
     def _trade_outcome_exists(self, trade_id):
         """Sprawdza czy trade_id istnieje w tabeli trade_outcomes."""
@@ -515,13 +637,14 @@ class MSSQLWriter:
             return 0
         synced = 0
         for pos in positions:
-            if self._order_exists(pos.ticket):
+            if self._trade_exists(mt5_position_id=pos.ticket):
                 # Pozycja istnieje — aktualizuj bieżące dane
                 try:
                     open_time_ts = datetime.fromtimestamp(pos.time)
                     duration_h = round((datetime.now() - open_time_ts).total_seconds() / 3600.0, 2)
                     self.update_trade_status(
-                        order_id=pos.ticket,
+                        mt5_position_id=pos.ticket,
+                        mt5_order_id=pos.ticket,
                         profit=float(pos.profit),
                         result='Z' if pos.profit >= 0 else 'S',
                         done='Nie',
@@ -547,6 +670,8 @@ class MSSQLWriter:
                     prediction="SYNC",
                     status="SYNCED",
                     order_id=pos.ticket,
+                    mt5_order_id=pos.ticket,
+                    mt5_position_id=pos.ticket,
                     confidence=0.0,
                     atr=0.0,
                     result='Z' if pos.profit >= 0 else 'S',
@@ -570,7 +695,7 @@ class MSSQLWriter:
             try:
                 # DEAL_ENTRY_IN = otwarcie pozycji
                 if deal.entry == 0:  # DEAL_ENTRY_IN
-                    if not self._order_exists(deal.order):
+                    if not self._trade_exists(mt5_order_id=deal.order, mt5_position_id=deal.position_id):
                         deal_time = datetime.fromtimestamp(deal.time)
                         direction = "BUY" if deal.type == 0 else "SELL"
                         self.insert_trade(
@@ -583,6 +708,8 @@ class MSSQLWriter:
                             prediction="SYNC",
                             status="SYNCED",
                             order_id=deal.order,
+                            mt5_order_id=deal.order,
+                            mt5_position_id=deal.position_id,
                             confidence=0.0,
                             atr=0.0,
                             result='S',
@@ -591,13 +718,43 @@ class MSSQLWriter:
                         )
                         synced += 1
                         logging.info(f"[SYNC] Deal IN {deal.symbol} #{deal.order} zsynchronizowany.")
+                    else:
+                        # Uzupełnij mapowanie ID także dla starszych rekordów.
+                        self.update_trade_mt5_ids(
+                            order_id=deal.order,
+                            mt5_order_id=deal.order,
+                            mt5_position_id=deal.position_id,
+                        )
 
                 # DEAL_ENTRY_OUT = zamknięcie pozycji
                 elif deal.entry == 1:  # DEAL_ENTRY_OUT
                     close_time = datetime.fromtimestamp(deal.time)
-                    # Używamy deal.position_id (= ticket pozycji w DB),
-                    # NIE deal.order (= numer zlecenia zamykającego)
+                    if not self._trade_exists(mt5_order_id=deal.order, mt5_position_id=deal.position_id):
+                        # Fallback: jeśli nie mamy rekordu otwarcia (np. ręczna transakcja),
+                        # tworzymy zamknięty rekord SYNCED aby zachować pełną historię w trades.
+                        direction = "SELL" if deal.type == 0 else "BUY"
+                        self.insert_trade(
+                            symbol=deal.symbol,
+                            direction=direction,
+                            price=deal.price,
+                            sl=0.0,
+                            tp=0.0,
+                            lot=deal.volume,
+                            prediction="SYNC",
+                            status="SYNCED",
+                            order_id=deal.position_id,
+                            mt5_order_id=deal.order,
+                            mt5_position_id=deal.position_id,
+                            confidence=0.0,
+                            atr=0.0,
+                            result='Z' if deal.profit >= 0 else 'S',
+                            profit=float(deal.profit),
+                            done='Tak'
+                        )
+
                     self.update_trade_status(
+                        mt5_position_id=deal.position_id,
+                        mt5_order_id=deal.order,
                         order_id=deal.position_id,
                         profit=deal.profit,
                         result='Z' if deal.profit >= 0 else 'S',
