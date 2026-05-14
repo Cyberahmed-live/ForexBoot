@@ -1426,7 +1426,8 @@ def update_closed_positions_status(days_back=5, last_update=None):
         for pos in positions:
             try:
                 open_time_ts = datetime.fromtimestamp(pos.time)
-                duration_h = round((datetime.now() - open_time_ts).total_seconds() / 3600.0, 2)
+                _dur_seconds = (datetime.now() - open_time_ts).total_seconds()
+                duration_h = round(max(0.0, _dur_seconds / 3600.0), 2)
                 mssql.update_trade_status(
                     mt5_position_id=pos.ticket,
                     mt5_order_id=pos.ticket,
@@ -1639,6 +1640,20 @@ try:
                 _daily_limit_warned = True
             # Nadal wykonuj trailing SL + heartbeat, ale nie otwieraj nowych pozycji
             update_trailing_sl()
+            try:
+                account = mt5.account_info()
+                positions = mt5.positions_get()
+                mssql.write_heartbeat(
+                    status="RUNNING", mode="OBSERVER", version=VERSION,
+                    equity=account.equity if account else None,
+                    balance=account.balance if account else None,
+                    open_positions=len(positions) if positions else 0,
+                    uptime_seconds=int(time.time() - _bot_start_time),
+                    observations_count=wisdom.count_observations(),
+                    message=f"Trading blocked: daily_loss_count={daily_loss_count}/{MAX_DAILY_LOSSES}"
+                )
+            except Exception as _hb_lim_e:
+                logging.error(f"❌ Heartbeat error (daily loss block): {_hb_lim_e}")
             time.sleep(TRAILING_UPDATE_SEC)
             continue
 
@@ -1653,6 +1668,23 @@ try:
                     )
                     _usd_limit_warned = True
                 update_trailing_sl()
+                try:
+                    account = mt5.account_info()
+                    positions = mt5.positions_get()
+                    mssql.write_heartbeat(
+                        status="RUNNING", mode="OBSERVER", version=VERSION,
+                        equity=account.equity if account else None,
+                        balance=account.balance if account else None,
+                        open_positions=len(positions) if positions else 0,
+                        uptime_seconds=int(time.time() - _bot_start_time),
+                        observations_count=wisdom.count_observations(),
+                        message=(
+                            f"Trading blocked: usd_loss={_today_usd:.2f}, "
+                            f"limit=-{DAILY_LOSS_USD_LIMIT:.0f}"
+                        )
+                    )
+                except Exception as _hb_usd_e:
+                    logging.error(f"❌ Heartbeat error (USD loss block): {_hb_usd_e}")
                 time.sleep(TRAILING_UPDATE_SEC)
                 continue
         except Exception as _usd_e:
