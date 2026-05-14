@@ -102,6 +102,23 @@ Po wdrożeniu:
 - mniejsze ryzyko strat jednostkowych na metalach i wybranych crossach,
 - strategia pozostaje aktywna, ale działa bardziej selektywnie i defensywnie.
 
+### 0.7 Ciągłość heartbeat niezależnie od blokad ryzyka — zmiana 2026-05-14
+
+**Problem operacyjny:** po restarcie bot potrafił działać i logować, ale przy aktywnej blokadzie strat (dziennej lub USD) nie zawsze emitował heartbeat do `bot_status`. Monitoring mógł to błędnie interpretować jako zatrzymanie procesu.
+
+**Założenie docelowe:** heartbeat opisuje żywotność i cykliczność pracy procesu, a nie sam fakt otwierania transakcji. Dlatego musi być emitowany również wtedy, gdy trading jest celowo zatrzymany przez safety guard.
+
+**Wdrożenie:** dodano zapis heartbeat także w gałęziach:
+- `daily_loss_count >= MAX_DAILY_LOSSES`,
+- `_today_usd <= -DAILY_LOSS_USD_LIMIT`.
+
+**Dodatkowo:** czas trwania pozycji (`duration_hours`) został ograniczony do wartości nieujemnych (`max(0, ...)`), aby rozjazdy czasu broker/serwer nie generowały ujemnych duration i fałszywych sygnałów diagnostycznych.
+
+**Efekt biznesowy:**
+- monitoring produkcyjny odzyskuje wiarygodność podczas risk-stop,
+- prostsze rozróżnienie: „bot żyje, ale trading jest zablokowany” vs „bot nie działa”,
+- mniej szumu i mniej fałszywych alarmów operacyjnych.
+
 ---
 
 ## 1. Wizja i filozofia wersji 1.4

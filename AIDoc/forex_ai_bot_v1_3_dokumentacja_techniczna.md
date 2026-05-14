@@ -630,6 +630,20 @@ Server=localhost; Database=ForexBotDB; Trusted_Connection=yes; Driver={ODBC Driv
 - Cut off weak entries in the `0.60–0.65` band that produced disproportionate losses in production audit.
 - Limit monetary damage on high-volatility / high-risk symbols even when ML signal still passes filters.
 
+### 2026-05-14 — heartbeat continuity + duration clamp fix
+
+#### `forex_ai_bot_v1.3.py`
+- **FIX heartbeat**: bot now writes `bot_status` heartbeat also in both safety-block branches:
+       - daily loss count block (`daily_loss_count >= MAX_DAILY_LOSSES`)
+       - daily USD loss circuit breaker (`today_usd <= -DAILY_LOSS_USD_LIMIT`)
+- **FIX duration**: `duration_hours` for open positions is clamped to non-negative values:
+       - `duration_h = max(0, (now - open_time).hours)`
+       - prevents negative durations in logs/DB when broker/server time drifts.
+
+#### Efekt operacyjny
+- Heartbeat remains continuous after restart even when trading is blocked by risk guards.
+- Monitoring no longer shows false bot inactivity in `bot_status` during safety-stop windows.
+
 ### 2026-05-04 (popołudnie) — poprawki jakości logów + bot_version w trades
 
 #### `forex_ai_bot_v1.3.py` — throttle powtórnych WARNINGów
