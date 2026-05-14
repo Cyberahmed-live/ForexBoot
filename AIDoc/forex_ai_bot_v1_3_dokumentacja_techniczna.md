@@ -610,6 +610,26 @@ Server=localhost; Database=ForexBotDB; Trusted_Connection=yes; Driver={ODBC Driv
 #### Efekt biznesowy
 - Manual trades and broker-side transactions are now consistently represented in `trades` and can be linked with `trade_outcomes` without relying on ambiguous `order_id` semantics.
 
+### 2026-05-14 — Variant B+A (risk tightening after loss audit)
+
+#### `forex_ai_bot_v1.3.py`
+- Raised global weak-signal entry floor: `CONF_THRESHOLD_MIN` `0.60 -> 0.65`.
+- Added per-symbol minimum confidence floor (`CONF_THRESHOLD_MIN_SYMBOL`) for risky instruments:
+       - `XAGUSD=0.70`
+       - `EURAUD`, `USDCHF`, `USDCAD`, `NZDJPY`, `CADCHF`, `AUDCHF` = `0.67`
+- Added hard per-symbol max lot caps (`MAX_LOT_SYMBOL`) applied after adaptive sizing:
+       - `XAGUSD=0.03`
+       - `EURAUD`, `USDCHF`, `USDCAD`, `NZDJPY`, `CADCHF`, `AUDCHF` = `0.60`
+- Added conservative per-symbol weak-signal min lots (`LOT_MIN_SYMBOL`) for the same risky instruments.
+- `reload_cfg()` now supports DB overrides for:
+       - `conf_threshold_min_<SYMBOL>`
+       - `max_lot_<SYMBOL>`
+       - existing `min_lot_<SYMBOL>` remains supported.
+
+#### Cel zmiany
+- Cut off weak entries in the `0.60–0.65` band that produced disproportionate losses in production audit.
+- Limit monetary damage on high-volatility / high-risk symbols even when ML signal still passes filters.
+
 ### 2026-05-04 (popołudnie) — poprawki jakości logów + bot_version w trades
 
 #### `forex_ai_bot_v1.3.py` — throttle powtórnych WARNINGów
