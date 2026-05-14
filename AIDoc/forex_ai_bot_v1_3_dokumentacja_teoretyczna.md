@@ -66,6 +66,25 @@ Po wdrożeniu:
 - Komunikaty o limitach strat: **raz na dobę** (flagi `_daily_limit_warned`, `_usd_limit_warned`)
 - Restart 23:59 działa teraz również w **weekend** (wcześniej był omijany)
 
+### 0.5 Spójność danych transakcyjnych (manualne vs botowe) — zmiana 2026-05-14
+
+**Problem wykryty na produkcji**: część transakcji ręcznych była widoczna w `trade_outcomes`, ale brakowało ich (lub były niepoprawnie mapowane) w `trades`.
+
+**Przyczyna techniczna**:
+- MT5 używa dwóch różnych identyfikatorów: `order` (warstwa zlecenia) i `position_id` (warstwa pozycji).
+- Historycznie bot opierał mapowanie głównie o jedno pole (`order_id`), co powodowało rozjazdy dla części ręcznych flow.
+
+**Nowe podejście (Variant B)**:
+- W `trades` są dwa jawne klucze: `mt5_order_id` i `mt5_position_id`.
+- Kluczem życia pozycji jest `mt5_position_id`.
+- `mt5_order_id` pozostaje do pełnej audytowalności i debugowania ścieżki egzekucji.
+- Jeśli bot dostanie zamknięcie pozycji bez wcześniejszego rekordu otwarcia (np. manualny trade), dopisuje rekord `SYNCED` do `trades` aby zachować pełną historię.
+
+**Efekt biznesowy**:
+- raporty strat i win-rate nie pomijają już części transakcji ręcznych,
+- analiza jakości strategii i risk management jest bardziej wiarygodna,
+- łatwiejszy audyt zgodności `trades` ↔ `trade_outcomes`.
+
 ---
 
 ## 1. Wizja i filozofia wersji 1.4

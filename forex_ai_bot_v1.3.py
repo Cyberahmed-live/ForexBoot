@@ -1353,6 +1353,8 @@ def update_closed_positions_status(days_back=5, last_update=None):
                     # Używamy deal.position_id (= ticket pozycji w DB),
                     # NIE deal.order (= numer zlecenia zamykającego)
                     mssql.update_trade_status(
+                        mt5_position_id=deal.position_id,
+                        mt5_order_id=deal.order,
                         order_id=deal.position_id,
                         done='Tak',
                         close_time=close_time,
@@ -1382,6 +1384,8 @@ def update_closed_positions_status(days_back=5, last_update=None):
                 open_time_ts = datetime.fromtimestamp(pos.time)
                 duration_h = round((datetime.now() - open_time_ts).total_seconds() / 3600.0, 2)
                 mssql.update_trade_status(
+                    mt5_position_id=pos.ticket,
+                    mt5_order_id=pos.ticket,
                     order_id=pos.ticket,
                     profit=float(pos.profit),
                     result='Z' if pos.profit >= 0 else 'S',
@@ -1410,6 +1414,7 @@ print(f"📈 Bot AI version: {VERSION} uruchomiony")
 
 # === WISDOM AGGREGATOR (v1.4) + MS SQL ===
 mssql = MSSQLWriter()
+mssql.ensure_trades_mt5_columns()  # Variant B: osobne ID MT5 (order/position) + backfill
 mssql.ensure_npm_table()          # NPM: utwórz tabelę jeśli nie istnieje
 mssql.ensure_diagnostics_table()  # DiagLog: utwórz tabelę jeśli nie istnieje
 mssql.purge_old_logs(days=14)     # Wyczyść logi starsze niż 2 tygodnie
